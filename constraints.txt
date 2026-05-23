@@ -1,0 +1,11 @@
+# Transitive dependency constraints (security hardening)
+# Used via: pip install -c constraints.txt -r requirements.txt
+#
+# These pin minimum versions for transitive deps that have known
+# vulnerabilities.  Putting them here (not requirements.txt) keeps
+# direct deps clean and prevents accidental uninstallation.
+
+# python-socketio: pickle deserialization RCE in <5.14.0 (GHSA-g8c6-8fjj-2r4m)
+python-socketio>=5.14.0
+# werkzeug: safe_join() bypass in <3.1.6 (GHSA-29vq-49wr-vm6x)
+werkzeug>=3.1.6
