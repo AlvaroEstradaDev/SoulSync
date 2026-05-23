@@ -19,10 +19,19 @@ docker run -d \
   -p 8008:8008 \
   -p 8888:8888 \
   -p 8889:8889 \
-  -v /mnt/user/appdata/soulsync/config.json:/app/config/config.json \
-  -v /mnt/user/appdata/soulsync/database:/app/data \
+  --add-host=host.docker.internal:host-gateway \
+  -v /mnt/user/appdata/soulsync/config:/app/config \
+  -v /mnt/user/appdata/soulsync/data:/app/data \
   -v /mnt/user/appdata/soulsync/logs:/app/logs \
-  -v /mnt/user/Music:/host/music:rw \
+  -v /mnt/user/downloads:/app/downloads \
+  -v /mnt/user/library:/app/Transfer \
+  -v /mnt/user/appdata/soulsync/staging:/app/Staging \
+  -v /mnt/user/appdata/soulsync/musicvideos:/app/MusicVideos \
+  -v /mnt/user/appdata/soulsync/scripts:/app/scripts \
+  -e PUID=99 \
+  -e PGID=100 \
+  -e TZ=America/New_York \
+  -e UMASK=022 \
   --restart unless-stopped \
   boulderbadgedad/soulsync:latest
 ```
@@ -43,25 +52,35 @@ Create `/boot/config/plugins/dockerMan/templates-user/soulsync.xml`:
   <Privileged>false</Privileged>
   <Support>https://github.com/Nezreka/SoulSync</Support>
   <Project>https://github.com/Nezreka/SoulSync</Project>
-  <Overview>Automated music discovery and collection manager. Sync Spotify/Tidal/YouTube playlists to Plex/Jellyfin via Soulseek.</Overview>
+  <ReadMe>https://github.com/Nezreka/SoulSync/blob/main/README.md</ReadMe>
+  <Overview>Music discovery and automation platform. Find new music, curate playlists, sync libraries, and integrate with popular streaming services, Soulseek (slskd), and media servers.</Overview>
   <Category>MediaApp:Music</Category>
   <WebUI>http://[IP]:[PORT:8008]</WebUI>
-  <TemplateURL/>
+  <TemplateURL>https://raw.githubusercontent.com/Nezreka/SoulSync/main/templates/soulsync.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/Nezreka/SoulSync/main/assets/trans.png</Icon>
-  <ExtraParams>--restart unless-stopped</ExtraParams>
+  <ExtraParams>--add-host=host.docker.internal:host-gateway</ExtraParams>
   <PostArgs/>
   <CPUset/>
-  <DateInstalled>1704067200</DateInstalled>
   <DonateText>Support Development</DonateText>
   <DonateLink>https://ko-fi.com/boulderbadgedad</DonateLink>
-  <Requires>slskd container or standalone installation</Requires>
+  <Requires>Requires slskd (Soulseek client) container. For full functionality, a media server (Navidrome, Plex, or Jellyfin) is recommended.</Requires>
   <Config Name="WebUI Port" Target="8008" Default="8008" Mode="tcp" Description="Web interface port" Type="Port" Display="always" Required="true" Mask="false">8008</Config>
   <Config Name="Spotify OAuth Port" Target="8888" Default="8888" Mode="tcp" Description="Spotify OAuth callback port" Type="Port" Display="always" Required="true" Mask="false">8888</Config>
   <Config Name="Tidal OAuth Port" Target="8889" Default="8889" Mode="tcp" Description="Tidal OAuth callback port" Type="Port" Display="always" Required="true" Mask="false">8889</Config>
   <Config Name="Config" Target="/app/config" Default="/mnt/user/appdata/soulsync/config" Mode="rw" Description="Configuration files" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/soulsync/config</Config>
-  <Config Name="Logs" Target="/app/logs" Default="/mnt/user/appdata/soulsync/logs" Mode="rw" Description="Log files" Type="Path" Display="always" Required="false" Mask="false">/mnt/user/appdata/soulsync/logs</Config>
-  <Config Name="Music Share" Target="/host/music" Default="/mnt/user/Music" Mode="rw" Description="Your music share for downloads and library" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/Music</Config>
-  <Config Name="Database Volume" Target="/app/database" Default="" Mode="" Description="Database volume (leave empty for named volume)" Type="Variable" Display="always" Required="false" Mask="false"/>
+  <Config Name="Logs" Target="/app/logs" Default="/mnt/user/appdata/soulsync/logs" Mode="rw" Description="Log files" Type="Path" Display="advanced" Required="false" Mask="false">/mnt/user/appdata/soulsync/logs</Config>
+  <Config Name="Database Volume" Target="/app/data" Default="/mnt/user/appdata/soulsync/data" Mode="rw" Description="Database storage (SQLite)" Type="Path" Display="advanced" Required="false" Mask="false">/mnt/user/appdata/soulsync/data</Config>
+  <Config Name="Downloads" Target="/app/downloads" Default="/mnt/user/downloads/" Mode="rw" Description="Path to Soulseek (slskd) downloads folder — should match your slskd download path" Type="Path" Display="always" Required="false" Mask="false">/mnt/user/downloads/</Config>
+  <Config Name="Library/Transfer" Target="/app/Transfer" Default="/mnt/user/library/" Mode="rw" Description="Your music library folder for organized/transferred files" Type="Path" Display="always" Required="false" Mask="false">/mnt/user/library/</Config>
+  <Config Name="Staging" Target="/app/Staging" Default="/mnt/user/appdata/soulsync/staging" Mode="rw" Description="Staging folder for importing existing music" Type="Path" Display="advanced" Required="false" Mask="false">/mnt/user/appdata/soulsync/staging</Config>
+  <Config Name="Music Videos" Target="/app/MusicVideos" Default="/mnt/user/appdata/soulsync/musicvideos" Mode="rw" Description="Music video storage folder" Type="Path" Display="advanced" Required="false" Mask="false">/mnt/user/appdata/soulsync/musicvideos</Config>
+  <Config Name="Scripts" Target="/app/scripts" Default="/mnt/user/appdata/soulsync/scripts" Mode="rw" Description="Custom user scripts folder" Type="Path" Display="advanced" Required="false" Mask="false">/mnt/user/appdata/soulsync/scripts</Config>
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="User ID for file permissions (default 99 = nobody on Unraid)" Type="Variable" Display="always" Required="false" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Group ID for file permissions (default 100 = users on Unraid)" Type="Variable" Display="always" Required="false" Mask="false">100</Config>
+  <Config Name="Timezone" Target="TZ" Default="America/New_York" Mode="" Description="Timezone for log timestamps and scheduling (e.g., America/New_York)" Type="Variable" Display="always" Required="false" Mask="false">America/New_York</Config>
+  <Config Name="UMASK" Target="UMASK" Default="022" Mode="" Description="File creation permission mask (default 022)" Type="Variable" Display="advanced" Required="false" Mask="false">022</Config>
+  <Config Name="Spotify Callback Port" Target="SOULSYNC_SPOTIFY_CALLBACK_PORT" Default="8888" Mode="" Description="Spotify OAuth callback port — change if port conflicts (e.g. Gluetun)" Type="Variable" Display="advanced" Required="false" Mask="false">8888</Config>
+  <Config Name="Tidal Callback Port" Target="SOULSYNC_TIDAL_CALLBACK_PORT" Default="8889" Mode="" Description="Tidal OAuth callback port — change if port conflicts" Type="Variable" Display="advanced" Required="false" Mask="false">8889</Config>
 </Container>
 ```
 
@@ -69,14 +88,16 @@ Create `/boot/config/plugins/dockerMan/templates-user/soulsync.xml`:
 
 ### Typical Unraid Paths
 ```
-/mnt/user/Music/               # Your main music share
-├── Downloads/                 # slskd download folder
-├── Library/                   # Organized music library
-└── Transfer/                  # Processing folder
-
 /mnt/user/appdata/soulsync/    # App configuration
-├── config/                    # SoulSync settings
-└── logs/                      # Application logs
+├── config/                    # SoulSync settings + settings.py
+├── data/                      # SQLite database (music_library.db)
+├── logs/                      # Application logs
+├── staging/                   # Import staging area
+├── musicvideos/               # Music video storage
+└── scripts/                   # Custom user scripts
+
+/mnt/user/downloads/           # Download folder (shared with slskd)
+/mnt/user/library/             # Organized music library (Transfer output)
 ```
 
 ## ⚙️ Configuration for Unraid
@@ -130,8 +151,13 @@ Add container manually with repository: boulderbadgedad/soulsync:latest
 ### 3. Configure Paths
 Map these volumes in Unraid Docker settings:
 - Container: `/app/config` → Host: `/mnt/user/appdata/soulsync/config`
-- Container: `/app/logs` → Host: `/mnt/user/appdata/soulsync/logs`  
-- Container: `/host/music` → Host: `/mnt/user/Music` (or your music share)
+- Container: `/app/data` → Host: `/mnt/user/appdata/soulsync/data`
+- Container: `/app/logs` → Host: `/mnt/user/appdata/soulsync/logs`
+- Container: `/app/downloads` → Host: `/mnt/user/downloads/` (same path slskd downloads to)
+- Container: `/app/Transfer` → Host: `/mnt/user/library/` (organized music output)
+- Container: `/app/Staging` → Host: `/mnt/user/appdata/soulsync/staging`
+- Container: `/app/MusicVideos` → Host: `/mnt/user/appdata/soulsync/musicvideos`
+- Container: `/app/scripts` → Host: `/mnt/user/appdata/soulsync/scripts`
 
 ### 4. Configure Ports
 - `8008` - Main web interface
@@ -195,21 +221,13 @@ This ensures:
 
 **Correct**:
 ```yaml
-- "/mnt/cache/appdata/soulsync/config.json:/app/config/config.json"  # ✅ Mount only the config file
-- "/mnt/cache/appdata/soulsync/database:/app/data"  # ✅ Mount database to different path
+- "/mnt/cache/appdata/soulsync/config:/app/config"    # ✅ Mount config directory (not the parent)
+- "/mnt/cache/appdata/soulsync/data:/app/data"        # ✅ Database to /app/data (not /app/database)
 ```
 
-**Why this happens**: Both `/app/config` and `/app/database` directories contain Python module files needed for the app to run. Mounting anything to these paths overwrites the modules. Mount config file specifically and database to `/app/data`.
+**Why this happens**: The `/app/database` directory contains Python module files needed for the app to run. Mounting anything to `/app/database` overwrites the modules. Always use `/app/data` for the database. The `/app/config` directory is safe to mount — the entrypoint copies `settings.py` and `config.json` into it on first run.
 
-**Important**: If mounting database to `/app/data`, update your config.json:
-```json
-{
-  "database": {
-    "path": "data/music_library.db",
-    "max_workers": 5
-  }
-}
-```
+**Important**: The default `config.example.json` uses `"data/music_library.db"` as the database path. The Dockerfile sets `DATABASE_PATH=/app/data/music_library.db` which overrides this at runtime. No manual config change needed for Docker installs.
 
 ### Container Won't Start
 ```bash
