@@ -3,12 +3,12 @@
   "spotify": {
     "client_id": "SpotifyClientID",
     "client_secret": "SpotifyClientSecret",
-    "redirect_uri": "http://127.0.0.1:8888/callback"
+    "redirect_uri": "http://localhost:8888/callback"
   },
   "tidal": {
     "client_id": "TidalClientID",
     "client_secret": "TidalClientSecret",
-    "redirect_uri": "http://127.0.0.1:8889/tidal/callback"
+    "redirect_uri": "http://localhost:8889/tidal/callback"
   },
   "plex": {
     "base_url": "http://192.168.86.36:32400",
@@ -39,7 +39,7 @@
     "level": "INFO"
   },
   "database": {
-    "path": "database/music_library.db",
+    "path": "data/music_library.db",
     "max_workers": 5
   },
   "metadata_enhancement": {

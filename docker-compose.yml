@@ -41,11 +41,11 @@ services:
       - soulsync_database:/app/data
       # IMPORTANT: Mount host paths that your input/output folders live on.
       # Replace these examples with your actual paths:
-      #   Linux/Mac:  - /path/to/your/downloads:/host/downloads:rw
-      #   WSL:        - /mnt/d/Music:/host/music:rw
+      #   Linux/Mac:  - /path/to/your/downloads:/app/downloads:rw
+      #   WSL:        - /mnt/d/Music:/app/Transfer:rw
       # You can add as many mounts as needed for your setup.
-      # - /path/to/downloads:/host/downloads:rw
-      # - /path/to/music-library:/host/music:rw
+      # - /path/to/downloads:/app/downloads:rw
+      # - /path/to/music-library:/app/Transfer:rw
       # Optional: Mount your music library for Plex/Jellyfin/Navidrome access
       # - /path/to/your/music:/music:ro
       #

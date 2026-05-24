@@ -33,7 +33,7 @@ services:
       - /mnt/data/media/music:/app/Transfer:rw
 
       # Database - USE NAMED VOLUME (critical!)
-      - soulsync_database:/app/database
+      - soulsync_database:/app/data
 
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -46,8 +46,8 @@ volumes:
 ```
 
 **IMPORTANT**:
-- Do NOT mount `/app/database` to a host path
-- Use a named volume `soulsync_database:/app/database`
+- Do NOT mount `/app/data` to a host path
+- Use a named volume `soulsync_database:/app/data`
 - Host path mounts cause database corruption
 
 ### 2. SoulSync Settings Configuration
@@ -86,7 +86,7 @@ In SoulSync settings → `config.json`:
 ```json
 {
   "database": {
-    "path": "database/music_library.db",
+    "path": "data/music_library.db",
     "max_workers": 3  // Reduce from 5 to 3
   }
 }
@@ -116,11 +116,11 @@ In SoulSync settings → `config.json`:
 ```yaml
 # ❌ WRONG - causes corruption
 volumes:
-  - /home/myname/apps/soulsync/database:/app/database
+  - /home/myname/apps/soulsync/data:/app/data
 
 # ✅ CORRECT - use named volume
 volumes:
-  - soulsync_database:/app/database
+  - soulsync_database:/app/data
 ```
 
 **Tracks marked as failed but downloaded:**
@@ -176,7 +176,7 @@ services:
       - ./logs:/app/logs
       - /mnt/data/slskd/downloads:/app/downloads
       - /mnt/data/media/music:/app/Transfer:rw
-      - soulsync_database:/app/database
+      - soulsync_database:/app/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
