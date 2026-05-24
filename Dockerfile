@@ -50,6 +50,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gosu \
     ffmpeg \
     libchromaprint-tools \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for security
@@ -101,7 +102,7 @@ RUN chmod +x /entrypoint.sh
 # The entrypoint script will switch to soulsync after setting up permissions
 
 # Expose port
-EXPOSE 8008
+EXPOSE 8008 8888 8889
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
