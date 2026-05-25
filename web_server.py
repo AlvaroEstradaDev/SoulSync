@@ -13281,9 +13281,12 @@ def parse_youtube_playlist(url):
             'skip_download': True,  # Don't download, just extract IDs and basic info
             'lazy_playlist': False,  # Force full playlist resolution (prevents ~100 entry cap)
         }
-        
+
+        from core.youtube_client import _resolve_cookie_source
+        _resolve_cookie_source(ydl_opts)
+
         tracks = []
-        
+
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             # Extract playlist info
             playlist_info = ydl.extract_info(url, download=False)
