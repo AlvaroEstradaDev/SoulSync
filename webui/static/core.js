@@ -243,7 +243,7 @@ function observeLazyBackgrounds(container) {
 // ===============================
 let _confirmResolver = null;
 
-function showConfirmDialog({ title = 'Confirm', message = '', confirmText = 'Confirm', cancelText = 'Cancel', destructive = false } = {}) {
+function showConfirmDialog({ title = 'Confirm', message = '', confirmText = 'Confirm', cancelText = 'Cancel', destructive = false, altText = '', altStyle = '' } = {}) {
     // Resolve any pending dialog as cancelled before opening a new one
     if (_confirmResolver) {
         _confirmResolver(false);
@@ -255,6 +255,7 @@ function showConfirmDialog({ title = 'Confirm', message = '', confirmText = 'Con
     const messageEl = document.getElementById('confirm-modal-message');
     const confirmBtn = document.getElementById('confirm-modal-confirm');
     const cancelBtn = document.getElementById('confirm-modal-cancel');
+    const altBtn = document.getElementById('confirm-modal-alt');
 
     titleEl.textContent = title;
     messageEl.textContent = message;
@@ -265,6 +266,16 @@ function showConfirmDialog({ title = 'Confirm', message = '', confirmText = 'Con
     confirmBtn.className = destructive
         ? 'modal-button modal-button--cancel'
         : 'modal-button modal-button--primary';
+
+    if (altText) {
+        altBtn.textContent = altText;
+        altBtn.className = altStyle === 'primary'
+            ? 'modal-button modal-button--primary'
+            : 'modal-button modal-button--secondary';
+        altBtn.style.display = '';
+    } else {
+        altBtn.style.display = 'none';
+    }
 
     overlay.classList.remove('hidden');
 

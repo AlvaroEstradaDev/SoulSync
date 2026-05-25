@@ -24791,6 +24791,47 @@ def get_youtube_playlist_state(url_hash):
         logger.error(f"Error getting YouTube playlist state: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/youtube/refresh-check/<url_hash>', methods=['POST'])
+def youtube_refresh_check(url_hash):
+    """Re-fetch YouTube playlist and return old vs new track counts for user confirmation."""
+    try:
+        if url_hash not in youtube_playlist_states:
+            return jsonify({"error": "YouTube playlist not found"}), 404
+
+        state = youtube_playlist_states[url_hash]
+        url = state.get('url')
+        if not url:
+            return jsonify({"error": "Original playlist URL not stored"}), 400
+
+        old_count = len(state['playlist']['tracks'])
+        playlist_data = parse_youtube_playlist(url)
+
+        if not playlist_data:
+            return jsonify({"error": "Failed to re-fetch playlist from YouTube"}), 500
+
+        new_count = len(playlist_data['tracks'])
+
+        old_ids = {t.get('id') for t in state['playlist']['tracks']}
+        new_ids = {t.get('id') for t in playlist_data['tracks']}
+        added = len(new_ids - old_ids)
+        removed = len(old_ids - new_ids)
+
+        state['_pending_refresh'] = playlist_data
+
+        return jsonify({
+            "old_count": old_count,
+            "new_count": new_count,
+            "playlist_name": state['playlist']['name'],
+            "diff": new_count - old_count,
+            "added": added,
+            "removed": removed,
+        })
+
+    except Exception as e:
+        logger.error(f"Error checking YouTube playlist refresh: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/api/youtube/reset/<url_hash>', methods=['POST'])
 def reset_youtube_playlist(url_hash):
     """Reset YouTube playlist to fresh phase (clear discovery/sync data)"""
@@ -24803,8 +24844,27 @@ def reset_youtube_playlist(url_hash):
         # Stop any active discovery
         if 'discovery_future' in state and state['discovery_future']:
             state['discovery_future'].cancel()
-        
-        # Reset state to fresh (preserve original playlist data)
+
+        refresh = request.get_json(silent=True) or {}
+        if refresh.get('apply_refresh') and state.get('_pending_refresh'):
+            mode = refresh.get('mode', 'mirror')
+            pending = state.pop('_pending_refresh')
+
+            if mode == 'additive':
+                existing_ids = {t.get('id') for t in state['playlist']['tracks']}
+                new_tracks = [t for t in pending['tracks'] if t.get('id') not in existing_ids]
+                state['playlist']['tracks'].extend(new_tracks)
+                state['spotify_total'] = len(state['playlist']['tracks'])
+                logger.info(f"Additive refresh: added {len(new_tracks)} new tracks, total {state['spotify_total']}")
+            else:
+                state['playlist'] = pending
+                state['playlist']['url_hash'] = url_hash
+                state['spotify_total'] = len(state['playlist']['tracks'])
+                logger.info(f"Mirror refresh: replaced playlist data, {state['spotify_total']} tracks")
+        else:
+            state.pop('_pending_refresh', None)
+
+        # Reset state to fresh
         state['phase'] = 'fresh'
         state['status'] = 'parsed'
         state['discovery_results'] = []

@@ -10697,51 +10697,90 @@ async function resetYouTubePlaylist(urlHash) {
     if (!state) return;
 
     try {
-        console.log(`🔄 Resetting YouTube playlist to fresh state: ${state.playlist.name}`);
+        console.log(`🔄 Checking YouTube playlist for changes: ${state.playlist.name}`);
 
-        // Call backend reset endpoint
-        const response = await fetch(`/api/youtube/reset/${urlHash}`, {
+        const checkResponse = await fetch(`/api/youtube/refresh-check/${urlHash}`, {
             method: 'POST'
         });
 
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.error || 'Failed to reset playlist');
+        if (!checkResponse.ok) {
+            const err = await checkResponse.json();
+            throw new Error(err.error || 'Failed to check playlist for changes');
         }
 
-        // Stop any active polling
-        if (activeYouTubePollers[urlHash]) {
-            clearInterval(activeYouTubePollers[urlHash]);
-            delete activeYouTubePollers[urlHash];
+        const check = await checkResponse.json();
+        const { old_count, new_count, added, removed, playlist_name } = check;
+
+        const parts = [];
+        if (added > 0) parts.push(`${added} new`);
+        if (removed > 0) parts.push(`${removed} removed`);
+
+        if (parts.length > 0) {
+            const result = await showConfirmDialog({
+                title: 'Playlist Changed',
+                message: `"${playlist_name}" has changed on YouTube: ${old_count} → ${new_count} tracks (${parts.join(', ')}).`,
+                confirmText: 'Mirror (exact match)',
+                altText: 'Add New Only',
+                altStyle: 'primary',
+                cancelText: 'Reset Only'
+            });
+
+            if (result === true) {
+                await doResetYouTubePlaylist(urlHash, true, 'mirror');
+            } else if (result === 'alt') {
+                await doResetYouTubePlaylist(urlHash, true, 'additive');
+            } else {
+                await doResetYouTubePlaylist(urlHash, false);
+            }
+        } else {
+            await doResetYouTubePlaylist(urlHash, false);
         }
-
-        // Update client state to match backend reset
-        state.phase = 'fresh';
-        state.discoveryResults = [];
-        state.discoveryProgress = 0;
-        state.spotifyMatches = 0;
-        state.syncPlaylistId = null;
-        state.syncProgress = {};
-        state.convertedSpotifyPlaylistId = null;
-
-        // Update card to reflect fresh state
-        updateYouTubeCardPhase(urlHash, 'fresh');
-        updateYouTubeCardProgress(urlHash, {
-            discovery_progress: 0,
-            spotify_matches: 0,
-            spotify_total: state.playlist.tracks.length
-        });
-
-        // Close modal
-        closeYouTubeDiscoveryModal(urlHash);
-
-        showToast(`Reset "${state.playlist.name}" to fresh state`, 'success');
-        console.log(`✅ Successfully reset YouTube playlist: ${state.playlist.name}`);
 
     } catch (error) {
         console.error(`❌ Error resetting YouTube playlist:`, error);
         showToast(`Error resetting playlist: ${error.message}`, 'error');
     }
+}
+
+async function doResetYouTubePlaylist(urlHash, applyRefresh, mode = 'mirror') {
+    const state = youtubePlaylistStates[urlHash];
+    if (!state) return;
+
+    const response = await fetch(`/api/youtube/reset/${urlHash}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apply_refresh: applyRefresh, mode: mode })
+    });
+
+    if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to reset playlist');
+    }
+
+    if (activeYouTubePollers[urlHash]) {
+        clearInterval(activeYouTubePollers[urlHash]);
+        delete activeYouTubePollers[urlHash];
+    }
+
+    state.phase = 'fresh';
+    state.discoveryResults = [];
+    state.discoveryProgress = 0;
+    state.spotifyMatches = 0;
+    state.syncPlaylistId = null;
+    state.syncProgress = {};
+    state.convertedSpotifyPlaylistId = null;
+
+    updateYouTubeCardPhase(urlHash, 'fresh');
+    updateYouTubeCardProgress(urlHash, {
+        discovery_progress: 0,
+        spotify_matches: 0,
+        spotify_total: state.playlist.tracks.length
+    });
+
+    closeYouTubeDiscoveryModal(urlHash);
+
+    showToast(`Reset "${state.playlist.name}" to fresh state${applyRefresh ? ' (refreshed)' : ''}`, 'success');
+    console.log(`✅ Successfully reset YouTube playlist: ${state.playlist.name}`);
 }
 
 async function resetBeatportChart(urlHash) {
