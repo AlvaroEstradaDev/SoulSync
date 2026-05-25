@@ -487,6 +487,16 @@ def _add_discover_cache_headers(response):
     return response
 
 
+@app.after_request
+def _set_security_headers(response):
+    if request.path.startswith('/socket.io/'):
+        return response
+    response.headers.setdefault('X-Content-Type-Options', 'nosniff')
+    response.headers.setdefault('X-Frame-Options', 'DENY')
+    response.headers.setdefault('Referrer-Policy', 'strict-origin-when-cross-origin')
+    return response
+
+
 def get_current_profile_id() -> int:
     """Get the current profile ID from Flask g context or default to 1.
 
@@ -2803,6 +2813,7 @@ def get_activity_logs():
 
 # --- Internal API Key Management (browser-only, no auth) ---
 @app.route('/api/v1/api-keys-internal', methods=['GET'])
+@admin_only
 def list_api_keys_internal():
     """List API keys for the settings page (no auth required — same as all UI routes)."""
     keys = config_manager.get('api_keys', [])
@@ -2819,6 +2830,7 @@ def list_api_keys_internal():
     return jsonify({"success": True, "data": {"keys": safe_keys}})
 
 @app.route('/api/v1/api-keys-internal/generate', methods=['POST'])
+@admin_only
 def generate_api_key_internal():
     """Generate API key from settings page (no auth required)."""
     from api.auth import generate_api_key
@@ -2837,6 +2849,7 @@ def generate_api_key_internal():
     }}), 201
 
 @app.route('/api/v1/api-keys-internal/revoke/<key_id>', methods=['DELETE'])
+@admin_only
 def revoke_api_key_internal(key_id):
     """Revoke API key from settings page (no auth required)."""
     keys = config_manager.get('api_keys', [])
@@ -2937,10 +2950,14 @@ def handle_dev_mode():
     global dev_mode_enabled
     if request.method == 'POST':
         data = request.get_json()
-        if data.get('password') == 'hydratest':
-            dev_mode_enabled = True
-            logger.info("Dev mode activated")
-            return jsonify({"success": True, "enabled": True})
+        stored_hash = config_manager.get('security.dev_mode_hash')
+        if stored_hash and data.get('password'):
+            import hashlib
+            attempt = hashlib.sha256(data.get('password', '').encode()).hexdigest()
+            if attempt == stored_hash:
+                dev_mode_enabled = True
+                logger.info("Dev mode activated")
+                return jsonify({"success": True, "enabled": True})
         return jsonify({"success": False, "error": "Invalid password"}), 401
     return jsonify({"enabled": dev_mode_enabled})
 
@@ -8626,7 +8643,7 @@ def check_artist_discography_completion_stream(artist_id):
         headers={
             'Cache-Control': 'no-cache',
             'Connection': 'keep-alive',
-            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Origin': request.host_url.rstrip('/'),
             'Access-Control-Allow-Headers': 'Cache-Control'
         }
     )
@@ -8726,7 +8743,7 @@ def library_completion_stream():
         headers={
             'Cache-Control': 'no-cache',
             'Connection': 'keep-alive',
-            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Origin': request.host_url.rstrip('/'),
             'Access-Control-Allow-Headers': 'Cache-Control'
         }
     )
@@ -29665,6 +29682,21 @@ def image_proxy():
     url = request.args.get('url', '')
     if not url or not url.startswith('http'):
         return '', 400
+    try:
+        import ipaddress as _ip
+        from urllib.parse import urlparse as _urlparse
+        parsed = _urlparse(url)
+        hostname = parsed.hostname or ''
+        if hostname in ('localhost', '127.0.0.1', '::1', '0.0.0.0'):
+            return '', 400
+        try:
+            addr = _ip.ip_address(hostname)
+            if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
+                return '', 400
+        except ValueError:
+            pass
+    except Exception:
+        return '', 400
 
     try:
         from core.image_cache import get_image_cache
@@ -29673,7 +29705,7 @@ def image_proxy():
         response = send_file(cached.path, mimetype=cached.mime_type, conditional=True)
         max_age = int(config_manager.get("image_cache.ttl_seconds", 2592000))
         response.headers['Cache-Control'] = f'private, max-age={max_age}'
-        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Origin'] = request.host_url.rstrip('/')
         response.headers['X-SoulSync-Image-Cache'] = cached.status
         return response
     except Exception as exc:
@@ -29694,7 +29726,7 @@ def serve_cached_image(cache_key):
         response = send_file(cached.path, mimetype=cached.mime_type, conditional=True)
         max_age = int(config_manager.get("image_cache.ttl_seconds", 2592000))
         response.headers['Cache-Control'] = f'private, max-age={max_age}'
-        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Origin'] = request.host_url.rstrip('/')
         response.headers['X-SoulSync-Image-Cache'] = cached.status
         return response
     except Exception as exc:
@@ -34238,7 +34270,7 @@ def start_oauth_callback_servers():
         else:
             logger.info(f"[OAuth] SOULSYNC_SPOTIFY_CALLBACK_PORT not set — using default port {spotify_port}")
         try:
-            bind_addr = ('0.0.0.0', spotify_port)
+            bind_addr = ('127.0.0.1', spotify_port)
             spotify_server = HTTPServer(bind_addr, SpotifyCallbackHandler)
             _oauth_logger.info(f"Spotify OAuth callback server listening on {bind_addr[0]}:{bind_addr[1]}")
             logger.info(f"Started Spotify OAuth callback server on {bind_addr[0]}:{bind_addr[1]}")
@@ -34321,9 +34353,9 @@ def start_oauth_callback_servers():
         else:
             logger.info(f"[OAuth] SOULSYNC_TIDAL_CALLBACK_PORT not set — using default port {tidal_port}")
         try:
-            tidal_server = HTTPServer(('0.0.0.0', tidal_port), TidalCallbackHandler)
+            tidal_server = HTTPServer(('127.0.0.1', tidal_port), TidalCallbackHandler)
             logger.info(f"Started Tidal OAuth callback server on port {tidal_port}")
-            logger.info(f"Tidal server listening on all interfaces, port {tidal_port}")
+            logger.info(f"Tidal server listening on localhost, port {tidal_port}")
             tidal_server.serve_forever()
         except Exception as e:
             logger.error(f"Failed to start Tidal callback server: {e}")
@@ -36031,6 +36063,9 @@ def _emit_download_status_loop():
 
 @socketio.on('connect')
 def handle_connect():
+    if not session.get('profile_id') and not request.args.get('api_key'):
+        logger.warning("WebSocket connection rejected — no session or API key")
+        return False
     logger.info("WebSocket client connected")
 
 @socketio.on('disconnect')

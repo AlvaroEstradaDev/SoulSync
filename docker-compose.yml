@@ -26,8 +26,8 @@ services:
       - SOULSYNC_TIDAL_CALLBACK_PORT=8889
     ports:
       - "8008:8008"   # Main web app
-      - "8888:8888"   # Spotify OAuth callback — keep in sync with SOULSYNC_SPOTIFY_CALLBACK_PORT above
-      - "8889:8889"   # Tidal OAuth callback   — keep in sync with SOULSYNC_TIDAL_CALLBACK_PORT above
+      - "127.0.0.1:8888:8888"   # Spotify OAuth callback — keep in sync with SOULSYNC_SPOTIFY_CALLBACK_PORT above
+      - "127.0.0.1:8889:8889"   # Tidal OAuth callback   — keep in sync with SOULSYNC_TIDAL_CALLBACK_PORT above
     volumes:
       # Persistent data volumes
       - ./config:/app/config

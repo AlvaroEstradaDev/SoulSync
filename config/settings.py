@@ -111,8 +111,15 @@ class ConfigManager:
         """Return a cached Fernet instance, creating the key file if needed."""
         if self._fernet is not None:
             return self._fernet
+        env_key = os.environ.get('SOULSYNC_ENCRYPTION_KEY')
+        if env_key:
+            try:
+                key = env_key.encode('utf-8') if isinstance(env_key, str) else env_key
+                self._fernet = Fernet(key)
+                return self._fernet
+            except Exception:
+                logger.warning("SOULSYNC_ENCRYPTION_KEY invalid, falling back to key file")
         key_file = self.database_path.parent / ".encryption_key"
-        # Migrate key from old location (config/) to new location (database/)
         old_key_file = self.config_path.parent / ".encryption_key"
         if not key_file.exists() and old_key_file.exists():
             try:
@@ -120,7 +127,7 @@ class ConfigManager:
                 shutil.move(str(old_key_file), str(key_file))
                 logger.info(f"Moved encryption key to {key_file}")
             except Exception:
-                key_file = old_key_file  # Fall back to old location
+                key_file = old_key_file
         if key_file.exists():
             with open(key_file, 'rb') as f:
                 key = f.read()
@@ -132,7 +139,7 @@ class ConfigManager:
             try:
                 key_file.chmod(0o600)
             except OSError:
-                pass  # Windows may not support Unix permissions
+                pass
         self._fernet = Fernet(key)
         return self._fernet
 
