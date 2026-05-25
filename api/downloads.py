@@ -136,48 +136,6 @@ def register_routes(bp):
         except Exception as e:
             return api_error("DOWNLOAD_ERROR", str(e), 500)
 
-    @bp.route("/downloads/pause", methods=["POST"])
-    @require_api_key
-    def pause_downloads():
-        """Pause all new downloads. Active downloads continue to completion."""
-        try:
-            cfg = current_app.soulsync["config_manager"]
-            cfg.set('downloads_paused', True)
-            current_app.logger.info("[Downloads] Downloads paused via API")
-            return api_success({"paused": True})
-        except Exception as e:
-            return api_error("PAUSE_ERROR", str(e), 500)
-
-    @bp.route("/downloads/resume", methods=["POST"])
-    @require_api_key
-    def resume_downloads():
-        """Resume downloads and kick queued batches."""
-        try:
-            cfg = current_app.soulsync["config_manager"]
-            cfg.set('downloads_paused', False)
-            current_app.logger.info("[Downloads] Downloads resumed via API")
-
-            from core.downloads.lifecycle import resume_all_paused_batches
-            _factory = current_app.soulsync.get("lifecycle_deps_factory")
-            if _factory:
-                resume_all_paused_batches(_factory())
-
-            return api_success({"paused": False})
-        except Exception as e:
-            return api_error("RESUME_ERROR", str(e), 500)
-
-    @bp.route("/downloads/pause-status", methods=["GET"])
-    @require_api_key
-    def download_pause_status():
-        """Return whether downloads are currently paused."""
-        try:
-            cfg = current_app.soulsync["config_manager"]
-            paused = cfg.get('downloads_paused', False)
-            return api_success({"paused": paused})
-        except Exception as e:
-            return api_error("STATUS_ERROR", str(e), 500)
-
-
     @bp.route("/downloads/cancel-all", methods=["POST"])
     @require_api_key
     def cancel_all_downloads():

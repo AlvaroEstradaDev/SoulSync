@@ -17096,6 +17096,43 @@ def get_batch_history():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/downloads/pause', methods=['POST'])
+def pause_downloads():
+    """Pause all new downloads. Active downloads continue to completion."""
+    try:
+        config_manager.set('downloads_paused', True)
+        logger.info("[Downloads] Downloads paused via API")
+        return jsonify({'success': True, 'paused': True})
+    except Exception as e:
+        logger.error(f"Error pausing downloads: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/downloads/resume', methods=['POST'])
+def resume_downloads():
+    """Resume downloads and kick queued batches."""
+    try:
+        config_manager.set('downloads_paused', False)
+        logger.info("[Downloads] Downloads resumed via API")
+        _factory = app.soulsync.get("lifecycle_deps_factory")
+        if _factory:
+            _downloads_lifecycle.resume_all_paused_batches(_factory())
+        return jsonify({'success': True, 'paused': False})
+    except Exception as e:
+        logger.error(f"Error resuming downloads: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/downloads/pause-status', methods=['GET'])
+def download_pause_status():
+    """Return whether downloads are currently paused."""
+    try:
+        paused = config_manager.get('downloads_paused', False)
+        return jsonify({'success': True, 'paused': paused})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/downloads/clear-completed', methods=['POST'])
 def clear_completed_downloads():
     """Remove completed/failed/cancelled tasks from the download tracker."""
