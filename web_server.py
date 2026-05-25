@@ -18283,12 +18283,19 @@ def server_playlist_add_track(playlist_id):
             return jsonify({"success": True, "message": "Track added", "new_playlist_id": new_id})
 
         elif active_server == 'jellyfin' and media_server_engine.client('jellyfin'):
-            current_tracks = media_server_engine.client('jellyfin').get_playlist_tracks(playlist_id) or []
-            track_ids = [str(t.ratingKey) for t in current_tracks]
-            pos = max(0, min(int(position), len(track_ids))) if position is not None else len(track_ids)
-            track_ids.insert(pos, track_id)
-            new_track_objs = [type('T', (), {'ratingKey': tid, 'title': ''})() for tid in track_ids]
-            media_server_engine.client('jellyfin').update_playlist(playlist_name, new_track_objs)
+            jf = media_server_engine.client('jellyfin')
+            if not jf.ensure_connection():
+                return jsonify({"success": False, "error": "Jellyfin not connected"}), 500
+            import requests as _req
+            add_url = f"{jf.base_url}/Playlists/{playlist_id}/Items"
+            add_params = {'Ids': track_id, 'UserId': jf.user_id}
+            resp = _req.post(
+                add_url, params=add_params,
+                headers={'X-Emby-Token': jf.api_key}, timeout=30,
+            )
+            if resp.status_code not in (200, 204):
+                logger.error(f"[ServerPlaylist] Jellyfin add-track failed: HTTP {resp.status_code}")
+                return jsonify({"success": False, "error": f"Jellyfin returned HTTP {resp.status_code}"}), 500
             _persist_find_and_add_match(source_track_id, active_server, track_id, server_track_title, source_title, source_artist)
             return jsonify({"success": True, "message": "Track added"})
 
