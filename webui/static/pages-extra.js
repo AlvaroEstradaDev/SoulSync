@@ -2207,6 +2207,7 @@ function loadActiveDownloadsPage() {
         if (currentPage === 'active-downloads') _adlFetchBatchHistory();
         else { clearInterval(_adlBatchHistoryPoller); _adlBatchHistoryPoller = null; }
     }, 60000);
+    _adlFetchPauseStatus();
 }
 
 function adlSetFilter(filter) {
@@ -2222,6 +2223,10 @@ async function _adlFetch() {
         if (data.success) {
             _adlData = data.downloads || [];
             _adlBatches = data.batches || [];
+            if (data.paused !== undefined) {
+                _adlPaused = data.paused;
+                _adlUpdatePauseBtn();
+            }
             _adlRender();
             _adlRenderBatchPanel();
             // Don't call _adlUpdateBadge() here — it counts the truncated
@@ -2833,10 +2838,6 @@ async function _adlCancelBatch(batchId) {
 }
 
 async function adlCancelAll() {
-    // Cancel every batch with active/queued work — equivalent to clicking
-    // "Cancel All" inside each running download modal. Uses the same
-    // /api/playlists/<batch_id>/cancel_batch endpoint the per-batch card
-    // cancel uses, so worker slots free atomically.
     const runningBatches = _adlBatches.filter(b => (b.active || 0) > 0 || (b.queued || 0) > 0);
     if (runningBatches.length === 0) {
         showToast('No active batches to cancel', 'info');
@@ -2894,6 +2895,57 @@ async function adlCancelAll() {
     }
 
     _adlFetch();
+}
+
+let _adlPaused = false;
+
+async function adlTogglePause() {
+    const btn = document.getElementById('adl-pause-btn');
+    if (!btn) return;
+    btn.disabled = true;
+
+    try {
+        const endpoint = _adlPaused ? '/api/downloads/resume' : '/api/downloads/pause';
+        const resp = await fetch(endpoint, { method: 'POST' });
+        const data = await resp.json();
+        if (data.success) {
+            _adlPaused = data.paused;
+            _adlUpdatePauseBtn();
+        } else {
+            showToast(data.error || 'Failed to toggle pause', 'error');
+        }
+    } catch (e) {
+        showToast('Pause toggle failed: ' + e.message, 'error');
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function _adlUpdatePauseBtn() {
+    const btn = document.getElementById('adl-pause-btn');
+    if (!btn) return;
+    if (_adlPaused) {
+        btn.textContent = 'Resume';
+        btn.title = 'Resume downloads and start queued tasks';
+        btn.classList.add('is-paused');
+    } else {
+        btn.textContent = 'Pause';
+        btn.title = 'Pause new downloads (active downloads continue)';
+        btn.classList.remove('is-paused');
+    }
+}
+
+async function _adlFetchPauseStatus() {
+    try {
+        const resp = await fetch('/api/downloads/pause-status');
+        const data = await resp.json();
+        if (data.success) {
+            _adlPaused = data.paused;
+            _adlUpdatePauseBtn();
+        }
+    } catch (e) {
+        console.debug('Pause status fetch failed:', e);
+    }
 }
 
 // ---- Batch History ----

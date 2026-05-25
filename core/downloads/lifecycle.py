@@ -203,6 +203,28 @@ class LifecycleDeps:
             raise ValueError("LifecycleDeps requires a wishlist track format helper")
 
 
+def resume_all_paused_batches(deps: LifecycleDeps) -> int:
+    """Kick off queued work for all batches after downloads are unpaused.
+
+    Returns the number of batches that had remaining work.
+    """
+    kicked = 0
+    with tasks_lock:
+        batch_ids = [
+            bid for bid, batch in download_batches.items()
+            if batch.get('queue_index', 0) < len(batch.get('queue', []))
+            and batch.get('phase') != 'complete'
+        ]
+    for bid in batch_ids:
+        try:
+            start_next_batch_of_downloads(bid, deps)
+            kicked += 1
+        except Exception as exc:
+            logger.error("[Resume] Failed to kick batch %s: %s", bid, exc)
+    logger.info("[Resume] Kicked %d batches after unpause", kicked)
+    return kicked
+
+
 # ---------------------------------------------------------------------------
 # start_next_batch_of_downloads
 # ---------------------------------------------------------------------------
@@ -217,6 +239,10 @@ def start_next_batch_of_downloads(batch_id: str, deps: LifecycleDeps) -> None:
         # Prevent starting new tasks if shutting down
         if deps.is_shutting_down():
             logger.info(f"[Batch Manager] Server shutting down - skipping new tasks for batch {batch_id}")
+            return
+
+        if deps.config_manager.get('downloads_paused', False):
+            logger.info(f"[Batch Manager] Downloads paused - skipping batch {batch_id}")
             return
 
         with tasks_lock:

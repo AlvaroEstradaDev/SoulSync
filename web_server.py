@@ -16405,6 +16405,8 @@ def _build_lifecycle_deps():
         spotify_public_discovery_states=spotify_public_discovery_states,
     )
 
+app.soulsync['lifecycle_deps_factory'] = _build_lifecycle_deps
+
 
 def _start_next_batch_of_downloads(batch_id):
     """Start the next batch of downloads up to the concurrent limit."""

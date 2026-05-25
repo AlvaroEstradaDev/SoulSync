@@ -58314,6 +58314,33 @@ body.reduce-effects *::after {
     pointer-events: none;
 }
 
+.adl-pause-btn {
+    padding: 5px 12px;
+    border-radius: 7px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.03);
+    color: rgba(255, 255, 255, 0.4);
+    font-size: 0.72rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+}
+.adl-pause-btn:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.7);
+    border-color: rgba(255, 255, 255, 0.12);
+}
+.adl-pause-btn.is-paused {
+    background: rgba(230, 81, 0, 0.2);
+    color: #ffab40;
+    border-color: rgba(230, 81, 0, 0.5);
+}
+.adl-pause-btn.is-paused:hover {
+    background: rgba(230, 81, 0, 0.35);
+    color: #fff;
+}
+
 .adl-list {
     display: flex;
     flex-direction: column;

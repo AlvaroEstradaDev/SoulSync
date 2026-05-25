@@ -802,6 +802,7 @@ def build_unified_downloads_response(limit: int, deps: StatusDeps) -> dict:
         'total': len(items),
         'batches': batch_summaries,
         'timestamp': time.time(),
+        'paused': deps.config_manager.get('downloads_paused', False),
     }
 
 
