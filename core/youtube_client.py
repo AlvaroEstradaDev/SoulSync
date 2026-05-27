@@ -1136,10 +1136,13 @@ class YouTubeClient(DownloadSourcePlugin):
                         if filename.suffix.lower() not in _audio_exts:
                             m4a_path = filename.with_suffix('.m4a')
                             import subprocess
+                            file_size_mb = filename.stat().st_size / (1024 * 1024) if filename.exists() else 0
+                            ffmpeg_timeout = max(300, int(file_size_mb * 2))
+                            logger.info(f"ffmpeg conversion: {filename.name} ({file_size_mb:.1f}MB), timeout={ffmpeg_timeout}s")
                             conv = subprocess.run(
                                 ['ffmpeg', '-i', str(filename), '-vn', '-c:a', 'aac', '-b:a', '256k',
                                  '-y', str(m4a_path)],
-                                capture_output=True, timeout=120,
+                                capture_output=True, timeout=ffmpeg_timeout,
                             )
                             if conv.returncode != 0:
                                 logger.error(
