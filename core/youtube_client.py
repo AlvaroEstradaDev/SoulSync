@@ -367,6 +367,7 @@ class YouTubeClient(DownloadSourcePlugin):
                     'quiet': True,
                     'no_warnings': True,
                     'extract_flat': True,  # Don't download, just extract info
+                    'remote_components': ['ejs:github'],
                     'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
                 }
 
@@ -760,6 +761,7 @@ class YouTubeClient(DownloadSourcePlugin):
                     'no_warnings': True,
                     'extract_flat': True,
                     'default_search': 'ytsearch',
+                    'remote_components': ['ejs:github'],
                     'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                 }
                 _resolve_cookie_source(ydl_opts)
@@ -835,6 +837,7 @@ class YouTubeClient(DownloadSourcePlugin):
                     'no_warnings': True,
                     'extract_flat': True, # Fast mode: Don't fetch formats (massive speedup)
                     'default_search': 'ytsearch',
+                    'remote_components': ['ejs:github'],
                     'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
                 }
 
