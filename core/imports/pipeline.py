@@ -177,8 +177,17 @@ def post_process_matched_download(context_key, context, file_path, runtime, meta
             _expected_duration_ms = None
 
         _import_source = get_import_source(context)
+        _context_username = (
+            context.get("username")
+            or context.get("_download_username")
+            or ""
+        ).strip().lower()
+        _is_youtube = _import_source == "youtube" or _context_username == "youtube"
 
-        if _import_source == "youtube":
+        if not _is_youtube:
+            logger.info(f"[Integrity] source={_import_source!r} username={_context_username!r}")
+
+        if _is_youtube:
             _expected_duration_ms = None
             _duration_tolerance_override = None
         else:

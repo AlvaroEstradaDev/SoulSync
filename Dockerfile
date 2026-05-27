@@ -51,7 +51,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     libchromaprint-tools \
     tzdata \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL https://deno.land/install.sh | sh \
+    && cp /root/.deno/bin/deno /usr/local/bin/deno \
+    && rm -rf /root/.deno
 
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash --uid 1000 soulsync

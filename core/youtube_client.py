@@ -231,12 +231,7 @@ class YouTubeClient(DownloadSourcePlugin):
             'extract_flat': False,
             'postprocessors': [],
             'progress_hooks': [self._progress_hook],  # Track download progress
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['android', 'web'],
-                    'skip': ['hls', 'dash'],
-                }
-            },
+            'remote_components': ['ejs:github'],
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
             'age_limit': None,  # Don't skip age-restricted
         }
@@ -1111,7 +1106,6 @@ class YouTubeClient(DownloadSourcePlugin):
 
                     # On retry, try different strategies
                     if attempt == 1:
-                        # Drop cookies — authenticated sessions sometimes get restricted formats
                         if 'cookiesfrombrowser' in download_opts or 'cookiefile' in download_opts:
                             logger.info(f"Retry {attempt + 1}/{max_retries} without cookies")
                             download_opts.pop('cookiesfrombrowser', None)
@@ -1122,8 +1116,8 @@ class YouTubeClient(DownloadSourcePlugin):
                                 'youtube': { 'player_client': ['web_creator'] }
                             }
                     elif attempt >= 2:
-                        logger.info(f"Retry {attempt + 1}/{max_retries} with 'best' format (video fallback)")
-                        download_opts['format'] = 'best'
+                        logger.info(f"Retry {attempt + 1}/{max_retries} with fallback player client")
+                        download_opts['format'] = 'bestaudio/best'
                         download_opts.pop('cookiesfrombrowser', None)
                         download_opts.pop('cookiefile', None)
                         download_opts.pop('extractor_args', None)
@@ -1135,17 +1129,18 @@ class YouTubeClient(DownloadSourcePlugin):
 
                         filename = Path(ydl.prepare_filename(info))
 
-                        if filename.suffix.lower() == '.webm':
+                        _audio_exts = {'.m4a', '.mp3', '.flac', '.ogg', '.opus', '.wav', '.aac', '.wma'}
+                        if filename.suffix.lower() not in _audio_exts:
                             m4a_path = filename.with_suffix('.m4a')
                             import subprocess
                             conv = subprocess.run(
-                                ['ffmpeg', '-i', str(filename), '-c:a', 'aac', '-b:a', '256k',
+                                ['ffmpeg', '-i', str(filename), '-vn', '-c:a', 'aac', '-b:a', '256k',
                                  '-y', str(m4a_path)],
                                 capture_output=True, timeout=120,
                             )
                             if conv.returncode != 0:
                                 logger.error(
-                                    f"ffmpeg webm→m4a failed (rc={conv.returncode}): "
+                                    f"ffmpeg {filename.suffix}→m4a failed (rc={conv.returncode}): "
                                     f"{conv.stderr.decode(errors='replace')[:500]}"
                                 )
                             elif m4a_path.exists():
