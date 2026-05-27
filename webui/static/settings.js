@@ -1000,6 +1000,7 @@ async function loadSettingsData() {
         // Populate YouTube settings
         document.getElementById('youtube-cookies-browser').value = settings.youtube?.cookies_browser || '';
         document.getElementById('youtube-download-delay').value = settings.youtube?.download_delay ?? 3;
+        document.getElementById('youtube-search-engine').value = settings.youtube?.search_engine || 'youtube';
 
         // Update UI based on download source mode
         updateDownloadSourceUI();
@@ -2864,6 +2865,7 @@ async function saveSettings(quiet = false) {
         youtube: {
             cookies_browser: document.getElementById('youtube-cookies-browser').value,
             download_delay: parseInt(document.getElementById('youtube-download-delay').value) || 3,
+            search_engine: document.getElementById('youtube-search-engine').value,
         },
         security: {
             require_pin_on_launch: document.getElementById('security-require-pin')?.checked || false,

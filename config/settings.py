@@ -653,6 +653,7 @@ class ConfigManager:
             "youtube": {
                 "cookies_browser": "",      # "", "chrome", "firefox", "edge", "brave", "opera", "safari"
                 "download_delay": 3,        # seconds between sequential downloads
+                "search_engine": "youtube", # "youtube" (regular) or "music" (music.youtube.com)
             },
             "hydrabase": {
                 "url": "",

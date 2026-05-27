@@ -231,8 +231,8 @@ class YouTubeClient(DownloadSourcePlugin):
             'extract_flat': False,
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '320',
+                'preferredcodec': 'flac',
+                'preferredquality': '0',
             }],
             'progress_hooks': [self._progress_hook],  # Track download progress
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
@@ -272,6 +272,18 @@ class YouTubeClient(DownloadSourcePlugin):
         if stripped.startswith('-'):
             return f"{query[:leading_ws_len]}\\{stripped}"
         return query
+
+    def _is_music_search(self) -> bool:
+        from config.settings import config_manager
+        return config_manager.get('youtube.search_engine', 'youtube') == 'music'
+
+    def _build_search_url(self, query: str, max_results: int) -> str:
+        """Build yt-dlp search URL based on youtube.search_engine config."""
+        from urllib.parse import quote_plus
+        if self._is_music_search():
+            return f"https://music.youtube.com/search?q={quote_plus(query)}"
+        escaped = self._escape_ytsearch_query(query)
+        return f"ytsearch{max_results}:{escaped}"
 
     def is_available(self) -> bool:
         """
@@ -339,6 +351,8 @@ class YouTubeClient(DownloadSourcePlugin):
 
         has_cookies = 'cookiefile' in self.download_opts or 'cookiesfrombrowser' in self.download_opts
         logger.info(f"YouTube settings reloaded (delay={self._download_delay}s, cookies={'enabled' if has_cookies else 'disabled'})")
+        search_engine = config_manager.get('youtube.search_engine', 'youtube')
+        logger.info(f"YouTube search engine: {search_engine}")
 
     async def check_connection(self) -> bool:
         """
@@ -708,7 +722,7 @@ class YouTubeClient(DownloadSourcePlugin):
             size=file_size,
             bitrate=bitrate,
             duration=duration_ms,
-            quality="mp3",  # We always convert to MP3
+            quality="flac",
             free_upload_slots=999,  # YouTube always available
             upload_speed=999999,  # High speed indicator
             queue_length=0,  # No queue for YouTube
@@ -753,9 +767,8 @@ class YouTubeClient(DownloadSourcePlugin):
                 }
                 _resolve_cookie_source(ydl_opts)
 
-                search_query = self._escape_ytsearch_query(query)
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    data = ydl.extract_info(f"ytsearch{max_results}:{search_query}", download=False)
+                    data = ydl.extract_info(self._build_search_url(query, max_results), download=False)
                     if not data or 'entries' not in data:
                         return []
 
@@ -830,10 +843,9 @@ class YouTubeClient(DownloadSourcePlugin):
 
                 _resolve_cookie_source(ydl_opts)
 
-                search_query = self._escape_ytsearch_query(query)
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     # Search YouTube (max 50 results)
-                    search_results = ydl.extract_info(f"ytsearch50:{search_query}", download=False)
+                    search_results = ydl.extract_info(self._build_search_url(query, 50), download=False)
 
                     if not search_results or 'entries' not in search_results:
                         return []
@@ -1119,8 +1131,8 @@ class YouTubeClient(DownloadSourcePlugin):
                     with yt_dlp.YoutubeDL(download_opts) as ydl:
                         info = ydl.extract_info(youtube_url, download=True)
 
-                        # Get final filename (will be MP3 after ffmpeg conversion)
-                        filename = Path(ydl.prepare_filename(info)).with_suffix('.mp3')
+                        # Get final filename (will be FLAC after ffmpeg conversion)
+                        filename = Path(ydl.prepare_filename(info)).with_suffix('.flac')
 
                         if filename.exists():
                             return str(filename)
