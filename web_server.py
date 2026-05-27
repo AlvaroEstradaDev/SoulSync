@@ -1465,6 +1465,12 @@ def validate_and_heal_batch_states():
 
                 # Clean up orphaned tasks that are blocking progress
                 if orphaned_tasks and phase == 'downloading':
+                    all_terminal = actually_active == 0
+                    if all_terminal:
+                        logger.warning(f"[Batch Healing] Batch {batch_id}: all {len(orphaned_tasks)} tasks terminal, advancing queue_index past orphans")
+                        batch_data['queue_index'] = len(queue)
+                        batch_data['active_count'] = 0
+                        healed_batches.append(batch_id)
                     logger.warning(f"[Batch Healing] Found {len(orphaned_tasks)} orphaned tasks in active batch {batch_id}")
                     batches_needing_completion_check.append(batch_id)
 
