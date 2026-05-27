@@ -176,14 +176,15 @@ def post_process_matched_download(context_key, context, file_path, runtime, meta
         except Exception:
             _expected_duration_ms = None
 
-        # User-configurable tolerance override. None = use built-in
-        # auto-scaled defaults (3s normal / 5s for tracks >10min). Set
-        # higher (e.g. 10) when matched files routinely drift from the
-        # source's reported duration (live recordings, alternate
-        # masterings, etc).
-        _duration_tolerance_override = resolve_duration_tolerance(
-            config_manager.get('post_processing.duration_tolerance_seconds', 0)
-        )
+        _import_source = get_import_source(context)
+
+        if _import_source == "youtube":
+            _expected_duration_ms = None
+            _duration_tolerance_override = None
+        else:
+            _duration_tolerance_override = resolve_duration_tolerance(
+                config_manager.get('post_processing.duration_tolerance_seconds', 0)
+            )
         # User-approved quarantine restores can bypass quarantine gates
         # for this one post-processing pass.
         if _should_skip_quarantine_check(context, 'integrity'):

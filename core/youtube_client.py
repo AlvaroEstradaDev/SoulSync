@@ -229,12 +229,14 @@ class YouTubeClient(DownloadSourcePlugin):
             'quiet': True,
             'no_warnings': True,
             'extract_flat': False,
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'flac',
-                'preferredquality': '0',
-            }],
+            'postprocessors': [],
             'progress_hooks': [self._progress_hook],  # Track download progress
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'web'],
+                    'skip': ['hls', 'dash'],
+                }
+            },
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
             'age_limit': None,  # Don't skip age-restricted
         }
@@ -722,7 +724,7 @@ class YouTubeClient(DownloadSourcePlugin):
             size=file_size,
             bitrate=bitrate,
             duration=duration_ms,
-            quality="flac",
+            quality=quality_str,
             free_upload_slots=999,  # YouTube always available
             upload_speed=999999,  # High speed indicator
             queue_length=0,  # No queue for YouTube
@@ -1131,8 +1133,24 @@ class YouTubeClient(DownloadSourcePlugin):
                     with yt_dlp.YoutubeDL(download_opts) as ydl:
                         info = ydl.extract_info(youtube_url, download=True)
 
-                        # Get final filename (will be FLAC after ffmpeg conversion)
-                        filename = Path(ydl.prepare_filename(info)).with_suffix('.flac')
+                        filename = Path(ydl.prepare_filename(info))
+
+                        if filename.suffix.lower() == '.webm':
+                            m4a_path = filename.with_suffix('.m4a')
+                            import subprocess
+                            conv = subprocess.run(
+                                ['ffmpeg', '-i', str(filename), '-c:a', 'aac', '-b:a', '256k',
+                                 '-y', str(m4a_path)],
+                                capture_output=True, timeout=120,
+                            )
+                            if conv.returncode != 0:
+                                logger.error(
+                                    f"ffmpeg webm→m4a failed (rc={conv.returncode}): "
+                                    f"{conv.stderr.decode(errors='replace')[:500]}"
+                                )
+                            elif m4a_path.exists():
+                                filename.unlink(missing_ok=True)
+                                filename = m4a_path
 
                         if filename.exists():
                             return str(filename)
