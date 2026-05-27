@@ -744,8 +744,18 @@ class WebUIDownloadMonitor:
                 task.pop('queued_start_time', None)
                 task.pop('downloading_start_time', None)
                 task.pop('stuck_retry_count', None)
+            elif state_str == 'Initializing':
+                # Download dispatched but worker thread hasn't acquired the
+                # per-source semaphore yet (BackgroundDownloadWorker sets this
+                # in dispatch(), clears it on semaphore acquisition).  This is
+                # NOT stuck — the engine's rate-limiter controls when the
+                # download starts.  Canceling here kills a download that WILL
+                # run once a slot opens, causing "All N candidates failed" in
+                # the restarted worker because the good source was marked used.
+                task.pop('downloading_start_time', None)
+                return False
             else:
-                # Unknown state with no progress (e.g., "Requested", "Initializing")
+                # Unknown state with no progress (e.g., "Requested")
                 # Treat like 0% stuck — start/keep the downloading timer running
                 if 'downloading_start_time' not in task:
                     task['downloading_start_time'] = current_time

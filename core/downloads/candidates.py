@@ -379,6 +379,21 @@ def attempt_download_with_candidates(task_id, candidates, track, batch_id=None, 
                     download_tasks[task_id]['status'] = 'searching'
             continue
 
-    # All candidates failed
+    # All candidates exhausted — but check if a download is still active
+    # in the engine before declaring failure.  The monitor may have
+    # cleared download_id from the task while the engine's background
+    # worker is still running the download (e.g. rate-limited
+    # "Initializing" state).  Declaring failure here would mark the
+    # task failed even though the file is about to land on disk.
+    with tasks_lock:
+        if task_id in download_tasks:
+            active_dl_id = download_tasks[task_id].get('download_id')
+    if active_dl_id:
+        logger.info(
+            "[Modal Worker] All candidates skipped for '%s' but download %s still active — not failing",
+            track.name, active_dl_id,
+        )
+        return True
+
     logger.error(f"[Modal Worker] All {len(candidates)} candidates failed for '{track.name}'")
     return False
