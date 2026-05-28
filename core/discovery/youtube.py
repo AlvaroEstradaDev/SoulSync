@@ -32,6 +32,55 @@ from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
+_BATCH_SIZE = 30
+
+
+def _write_back_discovery_results(url_hash, state, tracks, deps, discovery_source=None):
+    """Flush accumulated discovery results to mirrored_playlist_tracks DB."""
+    db = deps.get_database()
+    playlist_id = state.get('mirrored_playlist_id')
+    if not playlist_id:
+        return
+    results_to_write = state.get('_pending_writeback', [])
+    if not results_to_write:
+        return
+    try:
+        for result in results_to_write:
+            idx = result.get('index', -1)
+            if idx < 0 or idx >= len(tracks):
+                continue
+            db_track_id = tracks[idx].get('db_track_id')
+            if not db_track_id:
+                continue
+            if result.get('status_class') in ('found', 'wing-it') and result.get('matched_data'):
+                extra_data = {
+                    'discovered': True,
+                    'provider': result.get('discovery_source', discovery_source or ''),
+                    'confidence': result.get('confidence', 0),
+                    'matched_data': result['matched_data'],
+                }
+                if result.get('manual_match'):
+                    extra_data['manual_match'] = True
+                if result.get('wing_it_fallback'):
+                    extra_data['wing_it_fallback'] = True
+                    extra_data['provider'] = 'wing_it_fallback'
+                db.update_mirrored_track_extra_data(db_track_id, extra_data)
+            else:
+                extra_data = {
+                    'discovered': False,
+                    'discovery_attempted': True,
+                    'provider': discovery_source or '',
+                }
+                db.update_mirrored_track_extra_data(db_track_id, extra_data)
+        progress = state.get('discovery_progress', 0)
+        db.update_mirrored_playlist_phase(playlist_id, state.get('phase', 'discovering'),
+                                          discovery_progress=progress,
+                                          discovery_source=discovery_source)
+        state['_pending_writeback'] = []
+        logger.info(f"Batch-wrote {len(results_to_write)} discovery results to DB for {url_hash}")
+    except Exception as wb_err:
+        logger.error(f"Error writing discovery results to DB: {wb_err}")
+
 
 @dataclass
 class YoutubeDiscoveryDeps:
@@ -120,6 +169,11 @@ def run_youtube_discovery_worker(url_hash, deps: YoutubeDiscoveryDeps):
                         }
                         state['spotify_matches'] += 1
                         state['discovery_results'].append(result)
+                        if '_pending_writeback' not in state:
+                            state['_pending_writeback'] = []
+                        state['_pending_writeback'].append(result)
+                        if len(state['_pending_writeback']) >= _BATCH_SIZE:
+                            _write_back_discovery_results(url_hash, state, tracks, deps, discovery_source=discovery_source)
                         continue
                 except Exception as cache_err:
                     logger.error(f"Cache lookup error: {cache_err}")
@@ -308,6 +362,11 @@ def run_youtube_discovery_worker(url_hash, deps: YoutubeDiscoveryDeps):
                     state['wing_it_count'] = state.get('wing_it_count', 0) + 1
 
                 state['discovery_results'].append(result)
+                if '_pending_writeback' not in state:
+                    state['_pending_writeback'] = []
+                state['_pending_writeback'].append(result)
+                if len(state['_pending_writeback']) >= _BATCH_SIZE:
+                    _write_back_discovery_results(url_hash, state, tracks, deps, discovery_source=discovery_source)
 
                 logger.info(f"  {'' if matched_track else ''} Track {i+1}/{len(tracks)}: {result['status']}")
 
@@ -325,6 +384,9 @@ def run_youtube_discovery_worker(url_hash, deps: YoutubeDiscoveryDeps):
                     'duration': '0:00'
                 }
                 state['discovery_results'].append(result)
+                if '_pending_writeback' not in state:
+                    state['_pending_writeback'] = []
+                state['_pending_writeback'].append(result)
 
         # Complete discovery
         state['phase'] = 'discovered'
@@ -336,40 +398,7 @@ def run_youtube_discovery_worker(url_hash, deps: YoutubeDiscoveryDeps):
         # and newly-discovered results are appended out of order.
         state['discovery_results'].sort(key=lambda r: r.get('index', 0))
 
-        # Write back discovery results to DB for mirrored playlists
-        if url_hash.startswith('mirrored_'):
-            try:
-                db = deps.get_database()
-                for result in state['discovery_results']:
-                    idx = result.get('index', -1)
-                    if idx < 0 or idx >= len(tracks):
-                        continue
-                    db_track_id = tracks[idx].get('db_track_id')
-                    if not db_track_id:
-                        continue
-                    if result.get('status_class') in ('found', 'wing-it') and result.get('matched_data'):
-                        extra_data = {
-                            'discovered': True,
-                            'provider': result.get('discovery_source', discovery_source),
-                            'confidence': result.get('confidence', 0),
-                            'matched_data': result['matched_data'],
-                        }
-                        if result.get('manual_match'):
-                            extra_data['manual_match'] = True
-                        if result.get('wing_it_fallback'):
-                            extra_data['wing_it_fallback'] = True
-                            extra_data['provider'] = 'wing_it_fallback'
-                        db.update_mirrored_track_extra_data(db_track_id, extra_data)
-                    else:
-                        extra_data = {
-                            'discovered': False,
-                            'discovery_attempted': True,
-                            'provider': discovery_source,
-                        }
-                        db.update_mirrored_track_extra_data(db_track_id, extra_data)
-                logger.info(f"Wrote discovery results to DB for {url_hash}")
-            except Exception as wb_err:
-                logger.error(f"Error writing discovery results to DB: {wb_err}")
+        _write_back_discovery_results(url_hash, state, tracks, deps, discovery_source=discovery_source)
 
         playlist_name = playlist['name']
         source_label = discovery_source.upper()
