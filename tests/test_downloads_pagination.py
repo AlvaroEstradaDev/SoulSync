@@ -8,7 +8,7 @@ and `status` query params and includes a `total` count.
 
 import sys
 import types
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -82,6 +82,7 @@ def _make_app_with_tasks(tasks_dict):
         downloads_mod.register_routes(bp)
 
     app.register_blueprint(bp)
+    app.soulsync = {"config_manager": MagicMock(get=lambda k, d=False: d)}
     app._original_download_tasks = original_tasks
     return app
 

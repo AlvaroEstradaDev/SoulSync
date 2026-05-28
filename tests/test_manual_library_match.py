@@ -27,7 +27,7 @@ def test_save_and_get_roundtrip(db):
     assert ok is True
     row = db.get_manual_library_match(1, "spotify", "track-abc")
     assert row is not None
-    assert row["library_track_id"] == 42
+    assert row["library_track_id"] == '42'
     assert row["source_title"] == "HUMBLE."
     assert row["source_artist"] == "Kendrick Lamar"
 
@@ -36,7 +36,7 @@ def test_save_upserts_existing(db):
     db.save_manual_library_match(1, "spotify", "track-abc", 42)
     db.save_manual_library_match(1, "spotify", "track-abc", 99, source_title="Updated")
     row = db.get_manual_library_match(1, "spotify", "track-abc")
-    assert row["library_track_id"] == 99
+    assert row["library_track_id"] == '99'
     assert row["source_title"] == "Updated"
 
 
@@ -56,14 +56,14 @@ def test_list_matches_scoped_to_profile(db):
     assert len(rows) == 2
     # Ordered by updated_at DESC — most recent first
     ids = {r["library_track_id"] for r in rows}
-    assert ids == {10, 20}
+    assert ids == {'10', '20'}
 
 
 def test_profile_isolation(db):
     db.save_manual_library_match(1, "spotify", "track-abc", 10)
     db.save_manual_library_match(2, "spotify", "track-abc", 20)
-    assert db.get_manual_library_match(1, "spotify", "track-abc")["library_track_id"] == 10
-    assert db.get_manual_library_match(2, "spotify", "track-abc")["library_track_id"] == 20
+    assert db.get_manual_library_match(1, "spotify", "track-abc")["library_track_id"] == '10'
+    assert db.get_manual_library_match(2, "spotify", "track-abc")["library_track_id"] == '20'
     assert len(db.list_manual_library_matches(1)) == 1
     assert len(db.list_manual_library_matches(2)) == 1
 
@@ -71,8 +71,8 @@ def test_profile_isolation(db):
 def test_server_source_isolation(db):
     db.save_manual_library_match(1, "spotify", "track-abc", 10, server_source="plex")
     db.save_manual_library_match(1, "spotify", "track-abc", 20, server_source="jellyfin")
-    assert db.get_manual_library_match(1, "spotify", "track-abc", "plex")["library_track_id"] == 10
-    assert db.get_manual_library_match(1, "spotify", "track-abc", "jellyfin")["library_track_id"] == 20
+    assert db.get_manual_library_match(1, "spotify", "track-abc", "plex")["library_track_id"] == '10'
+    assert db.get_manual_library_match(1, "spotify", "track-abc", "jellyfin")["library_track_id"] == '20'
 
 
 def test_get_returns_none_when_absent(db):
@@ -102,7 +102,7 @@ def test_get_match_for_track_falls_back_across_source_labels(db):
     )
 
     assert row is not None
-    assert row["library_track_id"] == 42
+    assert row["library_track_id"] == '42'
 
 
 def test_get_match_for_track_falls_back_to_source_title_artist(db):
@@ -128,7 +128,7 @@ def test_get_match_for_track_falls_back_to_source_title_artist(db):
     )
 
     assert row is not None
-    assert row["library_track_id"] == 42
+    assert row["library_track_id"] == '42'
 
 
 def test_add_to_wishlist_skips_manual_matched_track(db):
@@ -191,7 +191,7 @@ def test_service_save_and_get(db):
     mlm.save_match(db, 1, "spotify", "t1", 42, source_title="Song A")
     row = mlm.get_match(db, 1, "spotify", "t1")
     assert row is not None
-    assert row["library_track_id"] == 42
+    assert row["library_track_id"] == '42'
 
 
 def test_service_delete(db):

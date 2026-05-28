@@ -5253,7 +5253,7 @@ class MusicDatabase:
                 # Album exists - update it (update server_source if different)
                 cursor.execute("""
                     UPDATE albums
-                    SET artist_id = ?, title = ?, year = ?, thumb_url = ?, genres = ?,
+                    SET artist_id = ?, title = ?, year = ?, thumb_url = COALESCE(NULLIF(?, ''), thumb_url), genres = ?,
                         track_count = ?, duration = ?, server_source = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                 """, (artist_id, title, year, thumb_url, genres_json, track_count, duration, server_source, album_id))
@@ -5286,6 +5286,7 @@ class MusicDatabase:
                     # Read enrichment data from old album
                     cursor.execute("SELECT * FROM albums WHERE id = ?", (old_id,))
                     old_row = cursor.fetchone()
+                    preserved_thumb_url = thumb_url or (old_row['thumb_url'] if old_row and 'thumb_url' in old_row.keys() else None)
 
                     # Insert new album with fresh server metadata + preserved created_at
                     old_created = old_row['created_at'] if old_row else None
@@ -5293,7 +5294,7 @@ class MusicDatabase:
                         INSERT INTO albums (id, artist_id, title, year, thumb_url, genres,
                                             track_count, duration, server_source, created_at, updated_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                    """, (album_id, artist_id, title, year, thumb_url, genres_json,
+                    """, (album_id, artist_id, title, year, preserved_thumb_url, genres_json,
                           track_count, duration, server_source, old_created))
 
                     # Copy enrichment data from old record to new record
@@ -6422,6 +6423,54 @@ class MusicDatabase:
         except Exception as e:
             logger.error(f"Error fetching candidate albums for artist '{artist}': {e}")
             return candidates
+
+    def get_artist_tracks_indexed(self, name: str, server_source: Optional[str] = None, limit: int = 10000) -> List[DatabaseTrack]:
+        """Indexed two-step lookup: artist_id by exact name (then case-insensitive
+        fallback), then tracks via `artist_id IN (...)`. Avoids the function-in-WHERE
+        pattern in search_tracks that defeats the artists.name index. Returns []
+        when the artist isn't in the library — caller can decide to fall back to
+        the slower LIKE-based path for track_artist / diacritic recall."""
+        if not name:
+            return []
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            # Step 1: exact case-sensitive match — hits idx_artists_name in O(log n).
+            # Spotify's canonical artist names match the library 90%+ of the time.
+            cursor.execute("SELECT id FROM artists WHERE name = ?", (name,))
+            artist_ids = [r['id'] for r in cursor.fetchall()]
+
+            # Step 2: case-insensitive fallback if exact missed. Full scan, but only
+            # runs on the (uncommon) miss path so amortized cost stays low.
+            if not artist_ids:
+                cursor.execute("SELECT id FROM artists WHERE LOWER(name) = LOWER(?)", (name,))
+                artist_ids = [r['id'] for r in cursor.fetchall()]
+
+            if not artist_ids:
+                return []
+
+            placeholders = ','.join('?' for _ in artist_ids)
+            where = f"t.artist_id IN ({placeholders})"
+            params: list = list(artist_ids)
+            if server_source:
+                where += " AND t.server_source = ?"
+                params.append(server_source)
+            params.append(limit)
+
+            cursor.execute(f"""
+                SELECT t.*, a.name as artist_name, al.title as album_title,
+                       al.thumb_url as album_thumb_url
+                FROM tracks t
+                JOIN artists a ON a.id = t.artist_id
+                JOIN albums al ON al.id = t.album_id
+                WHERE {where}
+                LIMIT ?
+            """, params)
+            return self._rows_to_tracks(cursor.fetchall())
+        except Exception as e:
+            logger.error(f"Error fetching indexed artist tracks for '{name}': {e}")
+            return []
 
     def get_candidate_tracks_for_albums(self, album_ids: List) -> List[DatabaseTrack]:
         """
@@ -11920,7 +11969,7 @@ class MusicDatabase:
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                     ON CONFLICT(source, source_playlist_id, profile_id) DO UPDATE SET
                         name = excluded.name,
-                        description = excluded.description,
+                        description = COALESCE(NULLIF(excluded.description, ''), mirrored_playlists.description),
                         owner = excluded.owner,
                         image_url = excluded.image_url,
                         track_count = excluded.track_count,
@@ -12030,6 +12079,39 @@ class MusicDatabase:
         except Exception as e:
             logger.error(f"Error getting mirrored playlist tracks: {e}")
             return []
+
+    def update_mirrored_playlist_source_ref(
+        self,
+        playlist_id: int,
+        source_playlist_id: str,
+        description: Optional[str] = None,
+    ) -> bool:
+        """Update a mirrored playlist's upstream source reference.
+
+        This intentionally leaves mirrored tracks and discovery extra_data
+        untouched; refresh/discovery can use the new source reference on the
+        next run without losing existing local state.
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                if description is None:
+                    cursor.execute("""
+                        UPDATE mirrored_playlists
+                        SET source_playlist_id = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                    """, (source_playlist_id, playlist_id))
+                else:
+                    cursor.execute("""
+                        UPDATE mirrored_playlists
+                        SET source_playlist_id = ?, description = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                    """, (source_playlist_id, description, playlist_id))
+                conn.commit()
+                return cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"Error updating mirrored playlist source reference: {e}")
+            return False
 
     def update_mirrored_track_extra_data(self, track_id: int, extra_data_dict: dict) -> bool:
         """Merge new data into a mirrored track's extra_data JSON field."""

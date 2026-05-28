@@ -91,6 +91,7 @@ def _build_deps(
     rate_limited=False,
     activity_log=None,
     score_candidates_result=(None, 0.0, 0),
+    persist_state=lambda url_hash, state: None,
 ):
     pause_called = pause_called if pause_called is not None else []
     resume_called = resume_called if resume_called is not None else []
@@ -119,6 +120,7 @@ def _build_deps(
         },
         get_database=lambda: db,
         add_activity_item=lambda *a, **kw: activity_log.append((a, kw)),
+        persist_state=persist_state,
     )
     deps._db = db  # expose for test assertions
     deps._spotify = spotify
