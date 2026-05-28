@@ -24205,20 +24205,28 @@ def _rehydrate_youtube_playlist_states():
                 else:
                     extra_data = {}
 
+                matched_data = extra_data.get('matched_data', {})
+                is_found = bool(extra_data.get('discovered'))
+                status_label = 'Found' if is_found else 'Pending...'
+                status_class = 'found' if is_found else 'pending'
+
                 result = {
                     'index': t.get('position', 0) - 1,
-                    'track_name': t.get('track_name', ''),
-                    'artist_name': t.get('artist_name', ''),
-                    'status': 'found' if extra_data.get('discovered') else 'pending',
+                    'yt_track': t.get('track_name', ''),
+                    'yt_artist': t.get('artist_name', ''),
+                    'status': status_label,
+                    'status_class': status_class,
+                    'spotify_track': matched_data.get('name', '') if matched_data else '',
+                    'spotify_artist': matched_data.get('artists', [''])[0] if matched_data and matched_data.get('artists') else '',
+                    'spotify_album': matched_data.get('album', {}).get('name', '') if matched_data and isinstance(matched_data.get('album'), dict) else (matched_data.get('album', '') if matched_data else ''),
+                    'duration': f"{int(t.get('duration_ms', 0)) // 60000}:{(int(t.get('duration_ms', 0)) % 60000) // 1000:02d}" if t.get('duration_ms') else '0:00',
+                    'discovery_source': extra_data.get('provider', ''),
                 }
-                if extra_data.get('matched_data'):
-                    result['match_data'] = extra_data['matched_data']
-                    result['spotify_data'] = extra_data['matched_data']
+                if matched_data:
+                    result['match_data'] = matched_data
+                    result['spotify_data'] = matched_data
                     result['confidence'] = extra_data.get('confidence', 0.85)
-                    result['status'] = 'found'
-                    matched += 1
-                elif extra_data.get('discovered'):
-                    result['status'] = 'found'
+                if is_found:
                     matched += 1
                 discovery_results.append(result)
 
@@ -24232,10 +24240,10 @@ def _rehydrate_youtube_playlist_states():
                 'id': mp.get('source_playlist_id', ''),
                 'tracks': [
                     {
-                        'title': t.get('track_name', ''),
-                        'artist': t.get('artist_name', ''),
+                        'name': t.get('track_name', ''),
+                        'artists': [t.get('artist_name', '')] if t.get('artist_name') else [],
                         'album': t.get('album_name', ''),
-                        'duration': t.get('duration_ms', 0),
+                        'duration_ms': t.get('duration_ms', 0),
                         'thumbnail': t.get('image_url', ''),
                         'id': t.get('source_track_id', ''),
                     }
@@ -24244,14 +24252,17 @@ def _rehydrate_youtube_playlist_states():
                 'track_count': len(tracks),
             }
 
+            is_discovered = phase in ('discovered', 'syncing', 'sync_complete', 'downloading', 'download_complete')
+            progress_pct = mp.get('discovery_progress') or (100 if is_discovered else 0)
+
             youtube_playlist_states[url_hash] = {
                 'playlist': playlist_data,
                 'phase': phase,
                 'discovery_results': discovery_results,
-                'discovery_progress': len(discovery_results),
+                'discovery_progress': progress_pct,
                 'spotify_matches': matched,
                 'spotify_total': len(tracks),
-                'status': 'parsed',
+                'status': 'complete' if is_discovered else 'parsed',
                 'url': f"https://youtube.com/playlist?list={mp.get('source_playlist_id', '')}",
                 'sync_playlist_id': None,
                 'converted_spotify_playlist_id': None,
@@ -24261,8 +24272,8 @@ def _rehydrate_youtube_playlist_states():
                 'discovery_future': None,
                 'sync_progress': {},
                 'mirrored_playlist_id': mp['id'],
-                'discovery_progress': mp.get('discovery_progress', len(discovery_results)),
                 'discovery_source': mp.get('discovery_source'),
+                '_pending_writeback': [],
             }
             restored += 1
 
