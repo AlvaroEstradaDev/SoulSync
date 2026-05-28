@@ -24222,7 +24222,7 @@ def _rehydrate_youtube_playlist_states():
                     matched += 1
                 discovery_results.append(result)
 
-            phase = 'discovered'
+            phase = mp.get('phase') or 'discovered'
 
             playlist_data = {
                 'name': mp.get('name', 'Unknown'),
@@ -24260,6 +24260,9 @@ def _rehydrate_youtube_playlist_states():
                 'last_accessed': time.time(),
                 'discovery_future': None,
                 'sync_progress': {},
+                'mirrored_playlist_id': mp['id'],
+                'discovery_progress': mp.get('discovery_progress', len(discovery_results)),
+                'discovery_source': mp.get('discovery_source'),
             }
             restored += 1
 
@@ -24747,6 +24750,7 @@ from core.discovery import youtube as _discovery_youtube
 
 def _build_youtube_discovery_deps():
     """Build the YoutubeDiscoveryDeps bundle from web_server.py globals on each call."""
+    database = get_database()
     return _discovery_youtube.YoutubeDiscoveryDeps(
         youtube_playlist_states=youtube_playlist_states,
         spotify_client=spotify_client,
@@ -24764,6 +24768,14 @@ def _build_youtube_discovery_deps():
         build_discovery_wing_it_stub=_build_discovery_wing_it_stub,
         get_database=get_database,
         add_activity_item=add_activity_item,
+        persist_state=lambda url_hash, state: (
+            database.update_mirrored_playlist_phase(
+                state.get('mirrored_playlist_id'),
+                state.get('phase', 'fresh'),
+                discovery_progress=state.get('discovery_progress', 0),
+                discovery_source=state.get('discovery_source'),
+            ) if state.get('mirrored_playlist_id') else None
+        ),
     )
 
 
