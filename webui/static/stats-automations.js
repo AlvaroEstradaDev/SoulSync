@@ -527,12 +527,11 @@ function renderMirroredCard(p, container) {
         const st = youtubePlaylistStates[hash];
         // Treat as non-fresh if phase is set, or if a poller/discovery modal exists
         const hasActiveDiscovery = activeYouTubePollers[hash] || document.getElementById(`youtube-discovery-modal-${hash}`);
+        const isDiscovered = disc > 0 && disc >= tot;
         if (st && ((st.phase && st.phase !== 'fresh') || hasActiveDiscovery)) {
             if (st.phase === 'downloading' || st.phase === 'download_complete') {
-                // Open download modal directly (follows Tidal/YouTube card click pattern)
                 const spotifyPlaylistId = st.convertedSpotifyPlaylistId;
                 if (spotifyPlaylistId && activeDownloadProcesses[spotifyPlaylistId]) {
-                    // Modal already exists — just show it
                     const process = activeDownloadProcesses[spotifyPlaylistId];
                     if (process.modalElement) {
                         if (process.status === 'complete') {
@@ -541,10 +540,8 @@ function renderMirroredCard(p, container) {
                         process.modalElement.style.display = 'flex';
                     }
                 } else if (spotifyPlaylistId) {
-                    // Need to rehydrate the download modal
                     rehydrateMirroredDownloadModal(hash, st);
                 } else {
-                    // No converted playlist ID yet, fall back to discovery modal
                     openYouTubeDiscoveryModal(hash);
                 }
             } else {
@@ -553,6 +550,8 @@ function renderMirroredCard(p, container) {
                     startYouTubeDiscoveryPolling(hash);
                 }
             }
+        } else if (isDiscovered && !st) {
+            discoverMirroredPlaylist(p.id);
         } else {
             openMirroredPlaylistModal(p.id);
         }

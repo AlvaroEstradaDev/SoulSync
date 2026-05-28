@@ -41,7 +41,27 @@ class MusicMatchingEngine:
             # Space-based featuring (catches "Title feat. Artist" without parens)
             r'\sfeat\.?.*',
             r'\sft\.?.*',
-            r'\sfeaturing.*'
+            r'\sfeaturing.*',
+            # Video/media production suffixes — only strip known video metadata,
+            # never song subtitles like "(Airlock)" or remix info like "(PNAU Remix)"
+            r'\s*[\(\[]official\s+music\s+video[\)\]]',
+            r'\s*[\(\[]official\s+video[\)\]]',
+            r'\s*[\(\[]official\s+audio[\)\]]',
+            r'\s*[\(\[]official\s+lyric\s+video[\)\]]',
+            r'\s*[\(\[]official\s+visualizer[\)\]]',
+            r'\s*[\(\[]official\s+animated\s+video[\)\]]',
+            r'\s*[\(\[]official\s+4k\s*video[\)\]]',
+            r'\s*[\(\[]music\s+video[\)\]]',
+            r'\s*[\(\[]lyric\s+video[\)\]]',
+            r'\s*[\(\[]audio[\)\]]',
+            r'\s*[\(\[]visualizer[\)\]]',
+            r'\s*[\(\[]4k\s+remaster[\)\]]',
+            r'\s*[\(\[]hd\s+remaster[\)\]]',
+            r'\s*[\(\[]remastered\s*\d{0,4}[\)\]]',
+            r'\s*[\(\[]remaster[\)\]]',
+            r'\s*\[4k\]',
+            r'\s*\[hd\]',
+            r'\s*\[official\]',
         ]
         
         self.artist_patterns = [
@@ -172,6 +192,36 @@ class MusicMatchingEngine:
         
         return self.normalize_string(cleaned)
     
+    def _is_prefix_match(self, shorter: str, longer: str) -> float:
+        """Check if shorter is a word-boundary prefix of longer. Returns boost score or 0."""
+        if not shorter or not longer:
+            return 0.0
+
+        if longer.startswith(shorter):
+            rest = longer[len(shorter):].strip()
+            if not rest:
+                return 0.0
+            if len(shorter) < len(longer) and longer[len(shorter)] != ' ':
+                return 0.0
+
+            extra_lower = rest.lower().strip(' -()[]')
+            version_keywords = [
+                'remix', 'mix', 'rmx', 'live', 'acoustic', 'unplugged',
+                'slowed', 'reverb', 'sped up', 'speed up', 'radio edit',
+                'instrumental', 'karaoke', 'extended', 'demo',
+            ]
+            for kw in version_keywords:
+                if kw in extra_lower:
+                    return 0.0
+
+            coverage = len(shorter) / len(longer)
+            if coverage >= 0.5:
+                return max(0.82, 0.60 + coverage * 0.40)
+            elif len(shorter) >= 10:
+                return max(0.75, coverage)
+            return 0.0
+        return 0.0
+
     def similarity_score(self, str1: str, str2: str) -> float:
         """
         Calculates similarity score between two strings with STRICT version handling.
@@ -235,6 +285,32 @@ class MusicMatchingEngine:
                     # With 50/50 title/artist split: 0.3 * 0.5 + 1.0 * 0.5 = 0.65 < 0.7 threshold
                     logger.debug(f"Version mismatch detected: '{str1}' vs '{str2}' (keyword: '{keyword}') - applying heavy penalty")
                     return 0.30
+
+        # --- Prefix matching boost ---
+        # Handle cases like "Sweet Dreams" vs "Sweet Dreams (Are Made of This)"
+        # After clean_title both are normalized, so we check prefix relationship.
+        # Also handle containment: one string contained in the other at word boundary.
+        prefix_boost = self._is_prefix_match(shorter, longer)
+        if prefix_boost > 0:
+            return max(standard_ratio, prefix_boost)
+
+        # Word-boundary prefix: shorter's words match the start of longer's words.
+        # Catches "escape" vs "escape the pina colada song",
+        # "sweet dreams" vs "sweet dreams are made of this", etc.
+        shorter_words = shorter.split()
+        longer_words = longer.split()
+        if 1 <= len(shorter_words) <= len(longer_words) and len(shorter) >= 3:
+            if longer_words[:len(shorter_words)] == shorter_words:
+                coverage = len(shorter) / len(longer) if len(longer) > 0 else 0
+                if len(shorter_words) >= 2:
+                    boost = max(0.80, 0.55 + coverage * 0.45)
+                    return max(standard_ratio, boost)
+                elif coverage >= 0.30:
+                    boost = max(0.80, 0.55 + coverage * 0.45)
+                    return max(standard_ratio, boost)
+                else:
+                    boost = max(0.68, standard_ratio)
+                    return boost
 
         return standard_ratio
     

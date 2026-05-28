@@ -13075,6 +13075,65 @@ def _clean_track_title_web(track_title: str, artist_name: str) -> str:
 # YOUTUBE TRACK CLEANING FUNCTIONS (Ported from GUI sync.py)
 # ===================================================================
 
+def extract_artist_from_title(raw_title):
+    """Try to extract artist name from a YouTube video title.
+
+    Returns (artist, song) if a known pattern matches, else (None, None).
+    Patterns handled:
+      "Artist - Song", "Artist – Song"  (en-dash)
+      "Artist「Song」", "Artist『Song』"
+      "Artist / Song"
+      "【Artist】Song"
+      "Song by Artist"
+      "Song | Artist"
+    """
+    import re
+    if not raw_title:
+        return None, None
+
+    # Strip trailing noise before matching
+    t = raw_title.strip()
+
+    # "Artist - Song" / "Artist – Song" (en/em dash)
+    # Use lookbehind/lookahead to require the dash separator to be surrounded
+    # by spaces, or be an en/em dash (so hyphenated names like "KANA-BOON"
+    # are not split at the wrong position).
+    m = re.match(r'^(.+?)\s+(?:[-\u2013\u2014])\s+(.+)$', t)
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+    # Also try en/em dash without spaces (less common but valid)
+    m = re.match(r'^(.+?)[\u2013\u2014](.+)$', t)
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+
+    # "Artist「Song」" or "Artist『Song』"
+    m = re.match(r'^(.+?)[「『](.+?)[」』]', t)
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+
+    # "【Artist】Song"
+    m = re.match(r'^【(.+?)】\s*(.+)$', t)
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+
+    # "Artist / Song"
+    m = re.match(r'^(.+?)\s*/\s*(.+)$', t)
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+
+    # "Song by Artist" (at end of title, before any parens)
+    m = re.match(r'^(.+?)\s+by\s+(.+?)(?:\s*[(\[|].*)?$', t, re.IGNORECASE)
+    if m:
+        return m.group(2).strip(), m.group(1).strip()
+
+    # "Song | Artist"
+    m = re.match(r'^(.+?)\s*\|\s*(.+)$', t)
+    if m:
+        return m.group(2).strip(), m.group(1).strip()
+
+    return None, None
+
+
 def clean_youtube_track_title(title, artist_name=None):
     """
     Aggressively clean YouTube track titles by removing video noise and extracting clean track names
@@ -13084,7 +13143,7 @@ def clean_youtube_track_title(title, artist_name=None):
     'bbno$ - mary poppins (official music video)' → 'mary poppins'
     'Beyond (From "Moana 2") (Official Video) ft. Rachel House' → 'Beyond'
     'Temporary (feat. Skylar Grey) [Official Music Video]' → 'Temporary'
-    'ALL MY LOVE (Directors\' Cut)' → 'ALL MY LOVE'
+    'ALL MY LOVE (Directors\' cut)' → 'ALL MY LOVE'
     'Espresso Macchiato | Estonia 🇪🇪 | Official Music Video | #Eurovision2025' → 'Espresso Macchiato'
     """
     import re
@@ -13236,14 +13295,17 @@ def clean_youtube_artist(artist_string):
     
     # Remove common YouTube channel suffixes
     channel_suffixes = [
-        r'\s*-\s*Topic\s*$',       # YouTube auto-generated "Topic" channels (e.g. "Koven - Topic")
+        r'\s+Official\s+YouTube\s*$',
+        r'\s+Official\s*$',
+        r'\s*-\s*Topic\s*$',
+        r'\s+YouTube\s*$',
         r'\s*VEVO\s*$',
-        r'\s*Music\s*$',
-        r'\s*Official\s*$',
-        r'\s*Records\s*$',
-        r'\s*Entertainment\s*$',
-        r'\s*TV\s*$',
-        r'\s*Channel\s*$'
+        r'\s+Music\s*$',
+        r'\s+Records\s*$',
+        r'\s+Entertainment\s*$',
+        r'\s+TV\s*$',
+        r'\s+Channel\s*$',
+        r'\s+Topic\s*$',
     ]
     
     for suffix in channel_suffixes:
@@ -13316,10 +13378,18 @@ def parse_youtube_playlist(url):
                 raw_uploader = entry.get('uploader', 'Unknown Artist')
                 duration = entry.get('duration', 0)
                 video_id = entry.get('id', '')
-                
-                # Clean the track title and artist using our cleaning functions
-                cleaned_artist = clean_youtube_artist(raw_uploader)
-                cleaned_title = clean_youtube_track_title(raw_title, cleaned_artist)
+
+                # Try to extract artist from the video title first (more reliable
+                # than channel name).  Fall back to cleaned channel name.
+                title_artist, title_song = extract_artist_from_title(raw_title)
+                if title_artist and len(title_artist) >= 2:
+                    cleaned_artist = clean_youtube_artist(title_artist)
+                    cleaned_title = clean_youtube_track_title(
+                        title_song if title_song else raw_title, cleaned_artist
+                    )
+                else:
+                    cleaned_artist = clean_youtube_artist(raw_uploader)
+                    cleaned_title = clean_youtube_track_title(raw_title, cleaned_artist)
                 
                 # Create track object matching GUI structure
                 track_data = {
