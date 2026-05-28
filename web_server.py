@@ -24091,6 +24091,108 @@ def cancel_itunes_link_sync(url_hash):
 youtube_playlist_states = {}  # Key: url_hash, Value: persistent playlist state
 youtube_discovery_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="youtube_discovery")
 
+
+def _rehydrate_youtube_playlist_states():
+    """Restore youtube_playlist_states from mirrored_playlists DB on startup.
+
+    YouTube playlists are auto-mirrored to SQLite on parse, but the runtime
+    state dict is RAM-only.  Without rehydration the YouTube tab appears empty
+    after every container restart even though mirrored copies survive.
+    """
+    try:
+        db = get_database()
+        profile_id = get_current_profile_id()
+        mirrored = db.get_mirrored_playlists(profile_id=profile_id)
+        yt_playlists = [mp for mp in mirrored if mp.get('source') == 'youtube']
+
+        if not yt_playlists:
+            logger.info("[YouTube Rehydrate] No YouTube mirrored playlists found")
+            return 0
+
+        restored = 0
+        for mp in yt_playlists:
+            url_hash = mp.get('source_playlist_id', '')
+            if not url_hash:
+                continue
+
+            tracks = db.get_mirrored_playlist_tracks(mp['id'])
+
+            discovery_results = []
+            matched = 0
+            for t in tracks:
+                extra = t.get('extra_data')
+                if extra:
+                    try:
+                        extra_data = json.loads(extra) if isinstance(extra, str) else extra
+                    except (json.JSONDecodeError, TypeError):
+                        extra_data = {}
+                else:
+                    extra_data = {}
+
+                result = {
+                    'index': t.get('position', 0) - 1,
+                    'track_name': t.get('track_name', ''),
+                    'artist_name': t.get('artist_name', ''),
+                    'status': 'found' if extra_data.get('discovered') else 'pending',
+                }
+                if extra_data.get('matched_data'):
+                    result['match_data'] = extra_data['matched_data']
+                    result['spotify_data'] = extra_data['matched_data']
+                    result['confidence'] = extra_data.get('confidence', 0.85)
+                    result['status'] = 'found'
+                    matched += 1
+                elif extra_data.get('discovered'):
+                    result['status'] = 'found'
+                    matched += 1
+                discovery_results.append(result)
+
+            phase = 'discovered'
+
+            playlist_data = {
+                'name': mp.get('name', 'Unknown'),
+                'description': mp.get('description', ''),
+                'owner': mp.get('owner', ''),
+                'image_url': mp.get('image_url', ''),
+                'id': mp.get('source_playlist_id', ''),
+                'tracks': [
+                    {
+                        'title': t.get('track_name', ''),
+                        'artist': t.get('artist_name', ''),
+                        'album': t.get('album_name', ''),
+                        'duration': t.get('duration_ms', 0),
+                        'thumbnail': t.get('image_url', ''),
+                        'id': t.get('source_track_id', ''),
+                    }
+                    for t in tracks
+                ],
+                'track_count': len(tracks),
+            }
+
+            youtube_playlist_states[url_hash] = {
+                'playlist': playlist_data,
+                'phase': phase,
+                'discovery_results': discovery_results,
+                'discovery_progress': len(discovery_results),
+                'spotify_matches': matched,
+                'spotify_total': len(tracks),
+                'status': 'parsed',
+                'url': f"https://youtube.com/playlist?list={mp.get('source_playlist_id', '')}",
+                'sync_playlist_id': None,
+                'converted_spotify_playlist_id': None,
+                'download_process_id': None,
+                'created_at': time.time(),
+                'last_accessed': time.time(),
+                'discovery_future': None,
+                'sync_progress': {},
+            }
+            restored += 1
+
+        logger.info(f"[YouTube Rehydrate] Restored {restored} YouTube playlist states from DB")
+        return restored
+    except Exception as e:
+        logger.error(f"[YouTube Rehydrate] Failed: {e}")
+        return 0
+
 # Global state for Beatport chart management (persistent across page reloads)
 beatport_chart_states = {}  # Key: url_hash, Value: persistent chart state
 beatport_discovery_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="beatport_discovery")
@@ -36850,6 +36952,10 @@ def start_runtime_services():
         except Exception as _sweep_err:
             # Sweep must not crash startup — log and continue.
             logger.warning("[Startup] Album-bundle staging sweep failed: %s", _sweep_err)
+
+        # Rehydrate YouTube playlist states from mirrored_playlists DB
+        logger.info("Rehydrating YouTube playlist states from DB...")
+        _rehydrate_youtube_playlist_states()
 
         # Start simple background monitor when server starts
         logger.info("Starting simple background monitor...")

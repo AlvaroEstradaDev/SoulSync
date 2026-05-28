@@ -52,6 +52,7 @@ class YoutubeDiscoveryDeps:
     build_discovery_wing_it_stub: Callable
     get_database: Callable[[], Any]
     add_activity_item: Callable
+    persist_state: Callable[[str, dict], None]
 
 
 def run_youtube_discovery_worker(url_hash, deps: YoutubeDiscoveryDeps):
@@ -385,4 +386,5 @@ def run_youtube_discovery_worker(url_hash, deps: YoutubeDiscoveryDeps):
         state['status'] = 'error'
         state['phase'] = 'fresh'
     finally:
+        deps.persist_state(url_hash, state)
         deps.resume_enrichment_workers(_ew_state, 'YouTube discovery')

@@ -1350,7 +1350,7 @@ function createYouTubeCardFromBackendState(playlistInfo) {
     const container = document.getElementById('youtube-playlist-container');
 
     // Remove placeholder if it exists
-    const placeholder = container.querySelector('.youtube-playlist-placeholder');
+    const placeholder = container.querySelector('.playlist-placeholder, .youtube-playlist-placeholder');
     if (placeholder) {
         placeholder.remove();
     }

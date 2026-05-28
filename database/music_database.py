@@ -492,6 +492,24 @@ class MusicDatabase:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_mirrored_playlists_source ON mirrored_playlists (source, source_playlist_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_mirrored_tracks_playlist ON mirrored_playlist_tracks (playlist_id)")
 
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS youtube_playlist_states (
+                    url_hash TEXT PRIMARY KEY,
+                    state_json TEXT NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS youtube_playlist_track_states (
+                    url_hash TEXT NOT NULL,
+                    track_index INTEGER NOT NULL,
+                    result_json TEXT NOT NULL,
+                    PRIMARY KEY (url_hash, track_index),
+                    FOREIGN KEY (url_hash) REFERENCES youtube_playlist_states(url_hash) ON DELETE CASCADE
+                )
+            """)
+
             # Automations table — trigger → action scheduled tasks
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS automations (
@@ -531,30 +549,6 @@ class MusicDatabase:
             """)
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_arh_automation_id ON automation_run_history(automation_id)")
 
-            # Playlist pipeline run history table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS playlist_pipeline_run_history (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    playlist_id INTEGER,
-                    playlist_name TEXT,
-                    source TEXT,
-                    profile_id INTEGER DEFAULT 1,
-                    trigger_source TEXT DEFAULT 'pipeline',
-                    started_at TIMESTAMP,
-                    finished_at TIMESTAMP,
-                    duration_seconds REAL,
-                    status TEXT NOT NULL,
-                    summary TEXT,
-                    before_json TEXT,
-                    after_json TEXT,
-                    result_json TEXT,
-                    log_lines TEXT,
-                    FOREIGN KEY (playlist_id) REFERENCES mirrored_playlists(id) ON DELETE SET NULL
-                )
-            """)
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_pprh_playlist_id ON playlist_pipeline_run_history(playlist_id)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_pprh_profile_id ON playlist_pipeline_run_history(profile_id)")
-
             # Add explored_at to mirrored_playlists (migration)
             self._add_mirrored_playlist_explored_column(cursor)
 
@@ -563,7 +557,6 @@ class MusicDatabase:
             self._add_automation_system_column(cursor)
             self._add_automation_then_actions_column(cursor)
             self._add_automation_group_name_column(cursor)
-            self._add_automation_owned_by_column(cursor)
 
             # Library issues — user-reported problems with tracks/albums/artists
             cursor.execute("""
@@ -869,28 +862,6 @@ class MusicDatabase:
                 logger.info("Added group_name column to automations table")
         except Exception as e:
             logger.error(f"Error adding automation group_name column: {e}")
-
-    def _add_automation_owned_by_column(self, cursor):
-        """Add owned_by column so feature surfaces (Auto-Sync schedule
-        board, future pipeline groups) can recognize automations they
-        manage without relying on fragile name-prefix string matches."""
-        try:
-            cursor.execute("PRAGMA table_info(automations)")
-            cols = [c[1] for c in cursor.fetchall()]
-            if 'owned_by' not in cols:
-                cursor.execute("ALTER TABLE automations ADD COLUMN owned_by TEXT DEFAULT NULL")
-                logger.info("Added owned_by column to automations table")
-                # Backfill existing Auto-Sync automations created via the
-                # name/group-prefix convention so the board keeps managing them.
-                cursor.execute("""
-                    UPDATE automations
-                    SET owned_by = 'auto_sync'
-                    WHERE (group_name = 'Playlist Auto-Sync' OR name LIKE 'Auto-Sync:%')
-                      AND owned_by IS NULL
-                """)
-                logger.info(f"Backfilled {cursor.rowcount} existing Auto-Sync automations with owned_by='auto_sync'")
-        except Exception as e:
-            logger.error(f"Error adding automation owned_by column: {e}")
 
     def _add_automation_then_actions_column(self, cursor):
         """Add then_actions column to automations table and migrate existing notify data."""
@@ -4255,7 +4226,7 @@ class MusicDatabase:
                         source_album TEXT,
                         source_context_json TEXT,
                         server_source TEXT DEFAULT '',
-                        library_track_id INTEGER NOT NULL,
+                        library_track_id TEXT NOT NULL,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         UNIQUE(profile_id, source, source_track_id, server_source)
@@ -4269,11 +4240,46 @@ class MusicDatabase:
                     CREATE INDEX IF NOT EXISTS idx_mltm_lib_track
                     ON manual_library_track_matches (library_track_id)
                 """)
+                cursor.execute("PRAGMA table_info(manual_library_track_matches)")
+                cols = {r[1]: r[2] for r in cursor.fetchall()}
+                if cols.get('library_track_id', '').upper() == 'INTEGER':
+                    cursor.execute("ALTER TABLE manual_library_track_matches RENAME TO _mltm_old")
+                    cursor.execute("""
+                        CREATE TABLE manual_library_track_matches (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            profile_id INTEGER DEFAULT 1,
+                            source TEXT NOT NULL,
+                            source_track_id TEXT NOT NULL,
+                            source_title TEXT,
+                            source_artist TEXT,
+                            source_album TEXT,
+                            source_context_json TEXT,
+                            server_source TEXT DEFAULT '',
+                            library_track_id TEXT NOT NULL,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            UNIQUE(profile_id, source, source_track_id, server_source)
+                        )
+                    """)
+                    cursor.execute("""
+                        INSERT INTO manual_library_track_matches
+                        SELECT * FROM _mltm_old
+                    """)
+                    cursor.execute("DROP TABLE _mltm_old")
+                    cursor.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_mltm_lookup
+                        ON manual_library_track_matches (profile_id, source, source_track_id, server_source)
+                    """)
+                    cursor.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_mltm_lib_track
+                        ON manual_library_track_matches (library_track_id)
+                    """)
+                    logger.info("Migrated manual_library_track_matches.library_track_id INTEGER → TEXT")
         except Exception as e:
             logger.error(f"Error creating manual_library_track_matches table: {e}")
 
     def save_manual_library_match(self, profile_id: int, source: str, source_track_id: str,
-                                   library_track_id: int, **meta) -> bool:
+                                   library_track_id: str, **meta) -> bool:
         """Insert or replace a manual match. meta keys: source_title, source_artist,
         source_album, source_context_json, server_source."""
         try:
@@ -5247,7 +5253,7 @@ class MusicDatabase:
                 # Album exists - update it (update server_source if different)
                 cursor.execute("""
                     UPDATE albums
-                    SET artist_id = ?, title = ?, year = ?, thumb_url = COALESCE(NULLIF(?, ''), thumb_url), genres = ?,
+                    SET artist_id = ?, title = ?, year = ?, thumb_url = ?, genres = ?,
                         track_count = ?, duration = ?, server_source = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                 """, (artist_id, title, year, thumb_url, genres_json, track_count, duration, server_source, album_id))
@@ -5280,7 +5286,6 @@ class MusicDatabase:
                     # Read enrichment data from old album
                     cursor.execute("SELECT * FROM albums WHERE id = ?", (old_id,))
                     old_row = cursor.fetchone()
-                    preserved_thumb_url = thumb_url or (old_row['thumb_url'] if old_row and 'thumb_url' in old_row.keys() else None)
 
                     # Insert new album with fresh server metadata + preserved created_at
                     old_created = old_row['created_at'] if old_row else None
@@ -5288,7 +5293,7 @@ class MusicDatabase:
                         INSERT INTO albums (id, artist_id, title, year, thumb_url, genres,
                                             track_count, duration, server_source, created_at, updated_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                    """, (album_id, artist_id, title, year, preserved_thumb_url, genres_json,
+                    """, (album_id, artist_id, title, year, thumb_url, genres_json,
                           track_count, duration, server_source, old_created))
 
                     # Copy enrichment data from old record to new record
@@ -6418,54 +6423,6 @@ class MusicDatabase:
             logger.error(f"Error fetching candidate albums for artist '{artist}': {e}")
             return candidates
 
-    def get_artist_tracks_indexed(self, name: str, server_source: Optional[str] = None, limit: int = 10000) -> List[DatabaseTrack]:
-        """Indexed two-step lookup: artist_id by exact name (then case-insensitive
-        fallback), then tracks via `artist_id IN (...)`. Avoids the function-in-WHERE
-        pattern in search_tracks that defeats the artists.name index. Returns []
-        when the artist isn't in the library — caller can decide to fall back to
-        the slower LIKE-based path for track_artist / diacritic recall."""
-        if not name:
-            return []
-        try:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-
-            # Step 1: exact case-sensitive match — hits idx_artists_name in O(log n).
-            # Spotify's canonical artist names match the library 90%+ of the time.
-            cursor.execute("SELECT id FROM artists WHERE name = ?", (name,))
-            artist_ids = [r['id'] for r in cursor.fetchall()]
-
-            # Step 2: case-insensitive fallback if exact missed. Full scan, but only
-            # runs on the (uncommon) miss path so amortized cost stays low.
-            if not artist_ids:
-                cursor.execute("SELECT id FROM artists WHERE LOWER(name) = LOWER(?)", (name,))
-                artist_ids = [r['id'] for r in cursor.fetchall()]
-
-            if not artist_ids:
-                return []
-
-            placeholders = ','.join('?' for _ in artist_ids)
-            where = f"t.artist_id IN ({placeholders})"
-            params: list = list(artist_ids)
-            if server_source:
-                where += " AND t.server_source = ?"
-                params.append(server_source)
-            params.append(limit)
-
-            cursor.execute(f"""
-                SELECT t.*, a.name as artist_name, al.title as album_title,
-                       al.thumb_url as album_thumb_url
-                FROM tracks t
-                JOIN artists a ON a.id = t.artist_id
-                JOIN albums al ON al.id = t.album_id
-                WHERE {where}
-                LIMIT ?
-            """, params)
-            return self._rows_to_tracks(cursor.fetchall())
-        except Exception as e:
-            logger.error(f"Error fetching indexed artist tracks for '{name}': {e}")
-            return []
-
     def get_candidate_tracks_for_albums(self, album_ids: List) -> List[DatabaseTrack]:
         """
         Fetch every track belonging to the given set of album IDs in a single query.
@@ -6993,12 +6950,22 @@ class MusicDatabase:
         return unique_variations
     
     def _normalize_for_comparison(self, text: str) -> str:
-        """Delegates to `core.text.normalize.normalize_for_comparison`.
-        Kept as an instance method so existing internal callers don't need
-        to be touched — new code should import the public helper directly.
-        """
-        from core.text.normalize import normalize_for_comparison
-        return normalize_for_comparison(text)
+        """Normalize text for comparison with Unicode accent handling"""
+        if not text:
+            return ""
+        
+        # Try to use unidecode for accent normalization, fallback to basic if not available
+        try:
+            from unidecode import unidecode
+            # Convert accents: é→e, ñ→n, ü→u, etc.
+            normalized = unidecode(text)
+        except ImportError:
+            # Fallback: basic normalization without accent handling
+            normalized = text
+            logger.warning("unidecode not available, accent matching may be limited")
+        
+        # Convert to lowercase and strip
+        return normalized.lower().strip()
     
     def _calculate_track_confidence(self, search_title: str, search_artist: str, db_track: DatabaseTrack) -> float:
         """Calculate confidence score for track match with enhanced cleaning and Unicode normalization"""
@@ -7065,9 +7032,28 @@ class MusicDatabase:
             # search title, it's likely a different track (e.g. "Believe" vs "Believe In Me").
             # SequenceMatcher gives high scores when the shorter string is fully contained
             # in the longer one, which causes false positives for prefix/suffix matches.
+            # HOWEVER: prefix matches where shorter is a word-boundary prefix of longer
+            # (e.g. "Sweet Dreams" vs "Sweet Dreams Are Made Of This") should be boosted.
             len_search = len(clean_search_title) if clean_search_title else len(search_title_norm)
             len_db = len(clean_db_title) if clean_db_title else len(db_title_norm)
+            prefix_boosted = False
             if len_search > 0 and len_db > 0:
+                shorter_t = clean_search_title if len_search <= len_db else clean_db_title
+                longer_t = clean_db_title if len_search <= len_db else clean_search_title
+                if longer_t.startswith(shorter_t) and len(shorter_t) >= 10:
+                    rest = longer_t[len(shorter_t):].strip()
+                    if rest and longer_t[len(shorter_t)] == ' ':
+                        rest_lower = rest.lower().strip(' -()[]')
+                        version_kws = ['remix', 'mix', 'rmx', 'live', 'acoustic',
+                                       'slowed', 'reverb', 'sped up', 'instrumental',
+                                       'extended', 'demo']
+                        if not any(kw in rest_lower for kw in version_kws):
+                            coverage = len(shorter_t) / len(longer_t)
+                            boost = max(0.80, 0.55 + coverage * 0.45)
+                            best_title_similarity = max(best_title_similarity, boost)
+                            prefix_boosted = True
+
+            if not prefix_boosted and len_search > 0 and len_db > 0:
                 len_ratio = min(len_search, len_db) / max(len_search, len_db)
                 if len_ratio < 0.7:
                     # Titles differ in length by more than 30% — penalize heavily
@@ -7124,6 +7110,26 @@ class MusicDatabase:
             r'\s*feat\..*',         # Remove featuring
             r'\s*featuring.*',      # Remove featuring
             r'\s*ft\..*',           # Remove ft.
+
+            # Video/media production suffixes (metadata about the video, not the song)
+            r'\s*[\(\[]official\s+music\s+video[\)\]]',
+            r'\s*[\(\[]official\s+video[\)\]]',
+            r'\s*[\(\[]official\s+audio[\)\]]',
+            r'\s*[\(\[]official\s+lyric\s+video[\)\]]',
+            r'\s*[\(\[]official\s+visualizer[\)\]]',
+            r'\s*[\(\[]official\s+animated\s+video[\)\]]',
+            r'\s*[\(\[]official\s+4k\s*video[\)\]]',
+            r'\s*[\(\[]music\s+video[\)\]]',
+            r'\s*[\(\[]lyric\s+video[\)\]]',
+            r'\s*[\(\[]audio[\)\]]',
+            r'\s*[\(\[]visualizer[\)\]]',
+            r'\s*[\(\[]4k\s+remaster[\)\]]',
+            r'\s*[\(\[]hd\s+remaster[\)\]]',
+            r'\s*[\(\[]remastered\s*\d{0,4}[\)\]]',
+            r'\s*[\(\[]remaster[\)\]]',
+            r'\s*\[4k\]',
+            r'\s*\[hd\]',
+            r'\s*\[official\]',
 
             # Remasters (same recording, different mastering)
             r'\s*\d{4}\s*remaster.*',  # Remove "2015 remaster"
@@ -11914,7 +11920,7 @@ class MusicDatabase:
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                     ON CONFLICT(source, source_playlist_id, profile_id) DO UPDATE SET
                         name = excluded.name,
-                        description = COALESCE(NULLIF(excluded.description, ''), mirrored_playlists.description),
+                        description = excluded.description,
                         owner = excluded.owner,
                         image_url = excluded.image_url,
                         track_count = excluded.track_count,
@@ -12025,39 +12031,6 @@ class MusicDatabase:
             logger.error(f"Error getting mirrored playlist tracks: {e}")
             return []
 
-    def update_mirrored_playlist_source_ref(
-        self,
-        playlist_id: int,
-        source_playlist_id: str,
-        description: Optional[str] = None,
-    ) -> bool:
-        """Update a mirrored playlist's upstream source reference.
-
-        This intentionally leaves mirrored tracks and discovery extra_data
-        untouched; refresh/discovery can use the new source reference on the
-        next run without losing existing local state.
-        """
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                if description is None:
-                    cursor.execute("""
-                        UPDATE mirrored_playlists
-                        SET source_playlist_id = ?, updated_at = CURRENT_TIMESTAMP
-                        WHERE id = ?
-                    """, (source_playlist_id, playlist_id))
-                else:
-                    cursor.execute("""
-                        UPDATE mirrored_playlists
-                        SET source_playlist_id = ?, description = ?, updated_at = CURRENT_TIMESTAMP
-                        WHERE id = ?
-                    """, (source_playlist_id, description, playlist_id))
-                conn.commit()
-                return cursor.rowcount > 0
-        except Exception as e:
-            logger.error(f"Error updating mirrored playlist source reference: {e}")
-            return False
-
     def update_mirrored_track_extra_data(self, track_id: int, extra_data_dict: dict) -> bool:
         """Merge new data into a mirrored track's extra_data JSON field."""
         try:
@@ -12137,82 +12110,6 @@ class MusicDatabase:
             logger.error(f"Error getting mirrored playlist discovery counts: {e}")
             return (0, 0)
 
-    def get_all_mirrored_playlist_status_counts(self, profile_id: int = 1) -> dict:
-        """Return status counts for every mirrored playlist owned by the profile
-        in a single round-trip. Replaces N×4-query per-playlist loop on the
-        Auto-Sync modal load path. Result is `{playlist_id: {total, discovered,
-        wishlisted, in_library}}`."""
-        result: dict = {}
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT mp.id as playlist_id
-                    FROM mirrored_playlists mp
-                    WHERE mp.profile_id = ?
-                """, (profile_id,))
-                for row in cursor.fetchall():
-                    result[row['playlist_id']] = {'total': 0, 'discovered': 0, 'wishlisted': 0, 'in_library': 0}
-
-                # Core counts: total + discovered, grouped per playlist
-                cursor.execute("""
-                    SELECT mpt.playlist_id,
-                           COUNT(*) as total,
-                           SUM(CASE WHEN mpt.extra_data LIKE '%"discovered": true%' THEN 1 ELSE 0 END) as discovered
-                    FROM mirrored_playlist_tracks mpt
-                    JOIN mirrored_playlists mp ON mp.id = mpt.playlist_id
-                    WHERE mp.profile_id = ?
-                    GROUP BY mpt.playlist_id
-                """, (profile_id,))
-                for row in cursor.fetchall():
-                    pid = row['playlist_id']
-                    if pid not in result:
-                        result[pid] = {'total': 0, 'discovered': 0, 'wishlisted': 0, 'in_library': 0}
-                    result[pid]['total'] = row['total'] or 0
-                    result[pid]['discovered'] = row['discovered'] or 0
-
-                # Wishlist counts in one shot
-                try:
-                    cursor.execute("""
-                        SELECT mpt.playlist_id, COUNT(*) as wishlisted
-                        FROM mirrored_playlist_tracks mpt
-                        JOIN mirrored_playlists mp ON mp.id = mpt.playlist_id
-                        WHERE mp.profile_id = ?
-                          AND mpt.source_track_id IS NOT NULL AND mpt.source_track_id != ''
-                          AND EXISTS (SELECT 1 FROM wishlist_tracks wt
-                                      WHERE wt.spotify_track_id = mpt.source_track_id)
-                        GROUP BY mpt.playlist_id
-                    """, (profile_id,))
-                    for row in cursor.fetchall():
-                        pid = row['playlist_id']
-                        if pid in result:
-                            result[pid]['wishlisted'] = row['wishlisted'] or 0
-                except Exception as e:
-                    logger.debug(f"Batch wishlist counts failed: {e}")
-
-                # In-library counts in one shot. Case-sensitive join so
-                # idx_artists_name + idx_tracks_title kick in.
-                try:
-                    cursor.execute("""
-                        SELECT mpt.playlist_id, COUNT(DISTINCT mpt.id) as in_library
-                        FROM mirrored_playlist_tracks mpt
-                        JOIN mirrored_playlists mp ON mp.id = mpt.playlist_id
-                        JOIN artists a ON a.name = mpt.artist_name
-                        JOIN tracks t ON t.artist_id = a.id
-                                     AND t.title = mpt.track_name
-                        WHERE mp.profile_id = ?
-                        GROUP BY mpt.playlist_id
-                    """, (profile_id,))
-                    for row in cursor.fetchall():
-                        pid = row['playlist_id']
-                        if pid in result:
-                            result[pid]['in_library'] = row['in_library'] or 0
-                except Exception as e:
-                    logger.debug(f"Batch library counts failed: {e}")
-        except Exception as e:
-            logger.error(f"Error getting batch mirrored playlist status counts: {e}")
-        return result
-
     def get_mirrored_playlist_status_counts(self, playlist_id: int) -> dict:
         """Return discovery, wishlisted, and downloaded counts for a mirrored playlist.
         Discovery counts are critical (same as old method). Library/wishlist counts are
@@ -12234,39 +12131,28 @@ class MusicDatabase:
                 )
                 result['discovered'] = cursor.fetchone()['discovered']
 
-                # Best-effort extras — won't break if tracks table has issues.
-                # Wishlisted: indexed via wishlist_tracks.spotify_track_id.
+                # Best-effort extras — won't break if tracks table has issues
                 try:
                     cursor.execute("""
-                        SELECT COUNT(*) as wishlisted
+                        SELECT
+                            SUM(CASE WHEN mpt.source_track_id IS NOT NULL AND mpt.source_track_id != ''
+                                 AND EXISTS (SELECT 1 FROM wishlist_tracks wt
+                                             WHERE wt.spotify_track_id = mpt.source_track_id)
+                                 THEN 1 ELSE 0 END) as wishlisted,
+                            SUM(CASE WHEN EXISTS (SELECT 1 FROM tracks t
+                                                  JOIN artists a ON t.artist_id = a.id
+                                                  WHERE t.title = mpt.track_name COLLATE NOCASE
+                                                    AND (a.name = mpt.artist_name COLLATE NOCASE
+                                                         OR t.track_artist = mpt.artist_name COLLATE NOCASE))
+                                 THEN 1 ELSE 0 END) as in_library
                         FROM mirrored_playlist_tracks mpt
                         WHERE mpt.playlist_id = ?
-                          AND mpt.source_track_id IS NOT NULL AND mpt.source_track_id != ''
-                          AND EXISTS (SELECT 1 FROM wishlist_tracks wt
-                                      WHERE wt.spotify_track_id = mpt.source_track_id)
                     """, (playlist_id,))
-                    result['wishlisted'] = cursor.fetchone()['wishlisted'] or 0
+                    row = cursor.fetchone()
+                    result['wishlisted'] = row['wishlisted'] or 0
+                    result['in_library'] = row['in_library'] or 0
                 except Exception as extra_err:
-                    logger.debug(f"Wishlist count failed for playlist {playlist_id}: {extra_err}")
-
-                # In-library: case-sensitive equality so SQLite can use
-                # `idx_artists_name` and `idx_tracks_title`. COLLATE NOCASE on
-                # the join columns prevents index usage and takes ~18s per
-                # playlist on a 300k-track library; the case-sensitive variant
-                # is ~6ms. Misses purely-case-different matches (rare — Spotify
-                # canonicalizes artist/track names that match library imports).
-                try:
-                    cursor.execute("""
-                        SELECT COUNT(DISTINCT mpt.id) as in_library
-                        FROM mirrored_playlist_tracks mpt
-                        JOIN artists a ON a.name = mpt.artist_name
-                        JOIN tracks t ON t.artist_id = a.id
-                                     AND t.title = mpt.track_name
-                        WHERE mpt.playlist_id = ?
-                    """, (playlist_id,))
-                    result['in_library'] = cursor.fetchone()['in_library'] or 0
-                except Exception as extra_err:
-                    logger.debug(f"Library count failed for playlist {playlist_id}: {extra_err}")
+                    logger.debug(f"Optional status counts failed for playlist {playlist_id}: {extra_err}")
 
         except Exception as e:
             logger.error(f"Error getting mirrored playlist status counts: {e}")
@@ -12284,6 +12170,99 @@ class MusicDatabase:
             logger.error(f"Error deleting mirrored playlist: {e}")
             return False
 
+    # ── YouTube Playlist State Persistence ────────────────────────────
+
+    _YTPS_EXCLUDED_KEYS = frozenset({'discovery_future', 'discovery_results'})
+
+    @staticmethod
+    def _json_serial_warn(obj):
+        logger.warning(f"[YouTube State] Non-serializable object coerced to str: {type(obj).__name__}: {obj!r:.200}")
+        return str(obj)
+
+    def save_youtube_playlist_state(self, url_hash: str, state: dict) -> bool:
+        try:
+            serializable = {k: v for k, v in state.items() if k not in self._YTPS_EXCLUDED_KEYS}
+            state_json = json.dumps(serializable, default=self._json_serial_warn)
+            discovery_results = state.get('discovery_results', [])
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO youtube_playlist_states (url_hash, state_json, updated_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(url_hash) DO UPDATE SET
+                        state_json = excluded.state_json,
+                        updated_at = CURRENT_TIMESTAMP
+                """, (url_hash, state_json))
+                cursor.execute("DELETE FROM youtube_playlist_track_states WHERE url_hash = ?", (url_hash,))
+                for result in discovery_results:
+                    idx = result.get('index', 0)
+                    cursor.execute("""
+                        INSERT INTO youtube_playlist_track_states (url_hash, track_index, result_json)
+                        VALUES (?, ?, ?)
+                    """, (url_hash, idx, json.dumps(result, default=self._json_serial_warn)))
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Error saving YouTube playlist state: {e}")
+            return False
+
+    def load_youtube_playlist_state(self, url_hash: str) -> Optional[dict]:
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT state_json FROM youtube_playlist_states WHERE url_hash = ?", (url_hash,))
+                row = cursor.fetchone()
+                if not row:
+                    return None
+                state = json.loads(row['state_json'])
+                state.setdefault('discovery_future', None)
+                state['discovery_results'] = self._load_track_states(cursor, url_hash)
+                return state
+        except Exception as e:
+            logger.error(f"Error loading YouTube playlist state: {e}")
+            return None
+
+    def load_all_youtube_playlist_states(self) -> Dict[str, dict]:
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT url_hash, state_json FROM youtube_playlist_states")
+                result = {}
+                for row in cursor.fetchall():
+                    state = json.loads(row['state_json'])
+                    state.setdefault('discovery_future', None)
+                    state['discovery_results'] = self._load_track_states(cursor, row['url_hash'])
+                    result[row['url_hash']] = state
+                return result
+        except Exception as e:
+            logger.error(f"Error loading all YouTube playlist states: {e}")
+            return {}
+
+    def _load_track_states(self, cursor, url_hash: str) -> list:
+        cursor.execute(
+            "SELECT result_json FROM youtube_playlist_track_states WHERE url_hash = ? ORDER BY track_index",
+            (url_hash,)
+        )
+        results = []
+        for row in cursor.fetchall():
+            try:
+                results.append(json.loads(row['result_json']))
+            except (json.JSONDecodeError, TypeError) as e:
+                logger.warning(f"[YouTube State] Skipping corrupted track state row for {url_hash}: {e}")
+        return results
+
+    def delete_youtube_playlist_state(self, url_hash: str) -> bool:
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM youtube_playlist_states WHERE url_hash = ?", (url_hash,))
+                cursor.execute("DELETE FROM youtube_playlist_track_states WHERE url_hash = ?", (url_hash,))
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Error deleting YouTube playlist state: {e}")
+            return False
+
     # ===========================
     # AUTOMATIONS CRUD
     # ===========================
@@ -12291,22 +12270,15 @@ class MusicDatabase:
     def create_automation(self, name: str, trigger_type: str, trigger_config: str,
                           action_type: str, action_config: str, profile_id: int = 1,
                           notify_type: str = None, notify_config: str = '{}',
-                          then_actions: str = '[]', group_name: str = None,
-                          owned_by: str = None):
-        """Create a new automation. Returns the new automation ID or None.
-
-        ``owned_by`` tags an automation as managed by a feature surface
-        (e.g. ``'auto_sync'`` for entries the Playlist Auto-Sync board
-        creates) so that surface can recognize its own rows without
-        scraping the display name.
-        """
+                          then_actions: str = '[]', group_name: str = None):
+        """Create a new automation. Returns the new automation ID or None."""
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    INSERT INTO automations (name, trigger_type, trigger_config, action_type, action_config, profile_id, notify_type, notify_config, then_actions, group_name, owned_by)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (name, trigger_type, trigger_config, action_type, action_config, profile_id, notify_type, notify_config, then_actions, group_name, owned_by))
+                    INSERT INTO automations (name, trigger_type, trigger_config, action_type, action_config, profile_id, notify_type, notify_config, then_actions, group_name)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (name, trigger_type, trigger_config, action_type, action_config, profile_id, notify_type, notify_config, then_actions, group_name))
                 conn.commit()
                 return cursor.lastrowid
         except Exception as e:
@@ -12353,7 +12325,7 @@ class MusicDatabase:
 
     def update_automation(self, automation_id: int, **kwargs) -> bool:
         """Update automation fields."""
-        allowed = {'name', 'enabled', 'trigger_type', 'trigger_config', 'action_type', 'action_config', 'next_run', 'notify_type', 'notify_config', 'last_result', 'is_system', 'then_actions', 'group_name', 'owned_by'}
+        allowed = {'name', 'enabled', 'trigger_type', 'trigger_config', 'action_type', 'action_config', 'next_run', 'notify_type', 'notify_config', 'last_result', 'is_system', 'then_actions', 'group_name'}
         updates = {k: v for k, v in kwargs.items() if k in allowed}
         if not updates:
             return False
@@ -12530,73 +12502,6 @@ class MusicDatabase:
         except Exception as e:
             logger.error(f"Error clearing automation run history: {e}")
             return 0
-
-    def insert_playlist_pipeline_run_history(self, playlist_id, playlist_name, source,
-                                             profile_id, trigger_source, started_at,
-                                             finished_at, duration_seconds, status,
-                                             summary=None, before_json=None,
-                                             after_json=None, result_json=None,
-                                             log_lines=None):
-        """Insert a playlist pipeline run history entry and retain recent rows per profile."""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    INSERT INTO playlist_pipeline_run_history
-                    (playlist_id, playlist_name, source, profile_id, trigger_source,
-                     started_at, finished_at, duration_seconds, status, summary,
-                     before_json, after_json, result_json, log_lines)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    playlist_id, playlist_name, source, profile_id, trigger_source,
-                    started_at, finished_at, duration_seconds, status, summary,
-                    before_json, after_json, result_json, log_lines,
-                ))
-                cursor.execute("""
-                    DELETE FROM playlist_pipeline_run_history
-                    WHERE profile_id = ? AND id NOT IN (
-                        SELECT id FROM playlist_pipeline_run_history
-                        WHERE profile_id = ?
-                        ORDER BY id DESC LIMIT 300
-                    )
-                """, (profile_id, profile_id))
-                conn.commit()
-                return True
-        except Exception as e:
-            logger.error(f"Error inserting playlist pipeline run history for {playlist_id}: {e}")
-            return False
-
-    def get_playlist_pipeline_run_history(self, profile_id=1, playlist_id=None, limit=50, offset=0):
-        """Get playlist pipeline run history, newest first."""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                where = ["profile_id = ?"]
-                params = [profile_id]
-                if playlist_id:
-                    where.append("playlist_id = ?")
-                    params.append(playlist_id)
-                where_sql = " AND ".join(where)
-                cursor.execute(
-                    f"SELECT COUNT(*) FROM playlist_pipeline_run_history WHERE {where_sql}",
-                    params,
-                )
-                total = cursor.fetchone()[0]
-                cursor.execute(f"""
-                    SELECT id, playlist_id, playlist_name, source, profile_id, trigger_source,
-                           started_at, finished_at, duration_seconds, status, summary,
-                           before_json, after_json, result_json, log_lines
-                    FROM playlist_pipeline_run_history
-                    WHERE {where_sql}
-                    ORDER BY id DESC
-                    LIMIT ? OFFSET ?
-                """, [*params, limit, offset])
-                cols = [d[0] for d in cursor.description]
-                rows = [dict(zip(cols, row, strict=False)) for row in cursor.fetchall()]
-                return {'history': rows, 'total': total}
-        except Exception as e:
-            logger.error(f"Error getting playlist pipeline run history: {e}")
-            return {'history': [], 'total': 0}
 
     def get_radio_tracks(self, track_id, limit=20, exclude_ids=None) -> Dict[str, Any]:
         """Find similar tracks for radio mode auto-play queue.
