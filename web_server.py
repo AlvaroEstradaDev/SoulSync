@@ -33409,7 +33409,8 @@ def mirror_playlist_endpoint():
             profile_id=profile_id,
             description=data.get('description'),
             owner=data.get('owner'),
-            image_url=data.get('image_url')
+            image_url=data.get('image_url'),
+            source_id=data.get('source_id'),
         )
 
         if playlist_id is None:

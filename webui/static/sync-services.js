@@ -8887,7 +8887,7 @@ async function parseYouTubePlaylist() {
         mirrorPlaylist('youtube', result.url_hash, result.name, result.tracks.map(t => ({
             track_name: t.name || t.title || '', artist_name: Array.isArray(t.artists) ? t.artists[0] : (t.artist || ''),
             album_name: '', duration_ms: t.duration_ms || 0, source_track_id: t.id || ''
-        })), { description: url });
+        })), { description: url, source_id: result.id });
 
         // Clear input
         urlInput.value = '';

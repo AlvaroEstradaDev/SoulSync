@@ -409,7 +409,8 @@ function mirrorPlaylist(source, sourceId, name, tracks, metadata = {}) {
             tracks: normalizedTracks,
             description: metadata.description || '',
             owner: metadata.owner || '',
-            image_url: metadata.image_url || ''
+            image_url: metadata.image_url || '',
+            source_id: metadata.source_id || ''
         })
     }).then(r => r.json()).then(data => {
         if (data.success) console.log(`Mirrored ${source} playlist: ${name} (${normalizedTracks.length} tracks)`);
