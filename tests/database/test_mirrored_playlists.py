@@ -60,3 +60,39 @@ def test_mirror_playlist_refresh_preserves_existing_description(tmp_path):
     assert refreshed_id == playlist_id
     playlist = db.get_mirrored_playlist(playlist_id)
     assert playlist["description"] == "https://open.spotify.com/playlist/abc"
+
+
+def test_update_mirrored_playlist_phase(tmp_path):
+    db = MusicDatabase(str(tmp_path / "music.db"))
+    playlist_id = db.mirror_playlist(
+        source="youtube",
+        source_playlist_id="testhash",
+        name="Test Phase",
+        tracks=[{"track_name": "Song", "artist_name": "Artist"}],
+        profile_id=1,
+    )
+    assert playlist_id is not None
+
+    ok = db.update_mirrored_playlist_phase(playlist_id, "discovering", discovery_progress=50, discovery_source="spotify")
+    assert ok is True
+
+    playlist = db.get_mirrored_playlist(playlist_id)
+    assert playlist["phase"] == "discovering"
+    assert playlist["discovery_progress"] == 50
+    assert playlist["discovery_source"] == "spotify"
+
+
+def test_mirror_playlist_stores_source_id(tmp_path):
+    db = MusicDatabase(str(tmp_path / "music.db"))
+    playlist_id = db.mirror_playlist(
+        source="youtube",
+        source_playlist_id="testhash",
+        name="Test Source ID",
+        tracks=[{"track_name": "Song", "artist_name": "Artist"}],
+        profile_id=1,
+        source_id="PLabcdef123456",
+    )
+    assert playlist_id is not None
+
+    playlist = db.get_mirrored_playlist(playlist_id)
+    assert playlist["source_id"] == "PLabcdef123456"

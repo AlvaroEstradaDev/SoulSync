@@ -551,6 +551,7 @@ class MusicDatabase:
 
             # Add explored_at to mirrored_playlists (migration)
             self._add_mirrored_playlist_explored_column(cursor)
+            self._add_mirrored_playlist_phase_columns(cursor)
 
             # Add notification columns to automations (migration)
             self._add_automation_notify_columns(cursor)
@@ -828,6 +829,26 @@ class MusicDatabase:
                 logger.info("Added explored_at column to mirrored_playlists table")
         except Exception as e:
             logger.error(f"Error adding explored_at column to mirrored_playlists: {e}")
+
+    def _add_mirrored_playlist_phase_columns(self, cursor):
+        """Add phase, discovery_progress, discovery_source, source_id columns to mirrored_playlists."""
+        try:
+            cursor.execute("PRAGMA table_info(mirrored_playlists)")
+            cols = [c[1] for c in cursor.fetchall()]
+            if 'phase' not in cols:
+                cursor.execute("ALTER TABLE mirrored_playlists ADD COLUMN phase TEXT DEFAULT 'fresh'")
+                logger.info("Added phase column to mirrored_playlists table")
+            if 'discovery_progress' not in cols:
+                cursor.execute("ALTER TABLE mirrored_playlists ADD COLUMN discovery_progress INTEGER DEFAULT 0")
+                logger.info("Added discovery_progress column to mirrored_playlists table")
+            if 'discovery_source' not in cols:
+                cursor.execute("ALTER TABLE mirrored_playlists ADD COLUMN discovery_source TEXT")
+                logger.info("Added discovery_source column to mirrored_playlists table")
+            if 'source_id' not in cols:
+                cursor.execute("ALTER TABLE mirrored_playlists ADD COLUMN source_id TEXT")
+                logger.info("Added source_id column to mirrored_playlists table")
+        except Exception as e:
+            logger.error("Error adding phase columns: %s", e)
 
     def _add_automation_notify_columns(self, cursor):
         """Add notification and result columns to automations table."""
@@ -11965,19 +11986,21 @@ class MusicDatabase:
                 # Upsert the playlist row
                 cursor.execute("""
                     INSERT INTO mirrored_playlists
-                        (source, source_playlist_id, name, description, owner, image_url, track_count, profile_id, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                        (source, source_playlist_id, name, description, owner, image_url, track_count, profile_id, source_id, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                     ON CONFLICT(source, source_playlist_id, profile_id) DO UPDATE SET
                         name = excluded.name,
                         description = COALESCE(NULLIF(excluded.description, ''), mirrored_playlists.description),
                         owner = excluded.owner,
                         image_url = excluded.image_url,
                         track_count = excluded.track_count,
+                        source_id = COALESCE(NULLIF(excluded.source_id, ''), mirrored_playlists.source_id),
                         updated_at = CURRENT_TIMESTAMP
                 """, (
                     source, source_playlist_id, name,
                     kwargs.get('description'), kwargs.get('owner'),
-                    kwargs.get('image_url'), len(tracks), profile_id
+                    kwargs.get('image_url'), len(tracks), profile_id,
+                    kwargs.get('source_id')
                 ))
                 playlist_id = cursor.execute(
                     "SELECT id FROM mirrored_playlists WHERE source=? AND source_playlist_id=? AND profile_id=?",
@@ -12140,6 +12163,32 @@ class MusicDatabase:
                 return cursor.rowcount > 0
         except Exception as e:
             logger.error(f"Error updating mirrored track extra_data: {e}")
+            return False
+
+    def update_mirrored_playlist_phase(self, playlist_id: int, phase: str,
+                                        discovery_progress: int = None,
+                                        discovery_source: str = None) -> bool:
+        """Update phase columns on a mirrored playlist."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                sets = ["phase = ?"]
+                params = [phase]
+                if discovery_progress is not None:
+                    sets.append("discovery_progress = ?")
+                    params.append(discovery_progress)
+                if discovery_source is not None:
+                    sets.append("discovery_source = ?")
+                    params.append(discovery_source)
+                params.append(playlist_id)
+                cursor.execute(
+                    f"UPDATE mirrored_playlists SET {', '.join(sets)} WHERE id = ?",
+                    params
+                )
+                conn.commit()
+                return cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"Error updating mirrored playlist phase: {e}")
             return False
 
     def get_mirrored_tracks_extra_data_map(self, playlist_id: int) -> dict:
