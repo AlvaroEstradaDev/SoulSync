@@ -24351,7 +24351,9 @@ def parse_youtube_playlist_endpoint():
             'created_at': time.time(),
             'last_accessed': time.time(),
             'discovery_future': None,
-            'sync_progress': {}
+            'sync_progress': {},
+            'mirrored_playlist_id': None,
+            '_pending_writeback': [],
         }
         
         playlist_data['url_hash'] = url_hash
@@ -24382,6 +24384,25 @@ def start_youtube_discovery(url_hash):
         state['discovery_progress'] = 0
         state['spotify_matches'] = 0
         state['discovery_results'] = []
+
+        # Resolve mirrored_playlist_id and db_track_id from DB
+        try:
+            database = get_database()
+            profile_id = get_current_profile_id()
+            mirrored = database.get_mirrored_playlists(profile_id=profile_id)
+            matched = [mp for mp in mirrored if mp['source'] == 'youtube' and mp['source_playlist_id'] == url_hash]
+            if matched:
+                mp = matched[0]
+                state['mirrored_playlist_id'] = mp['id']
+                db_tracks = database.get_mirrored_playlist_tracks(mp['id'])
+                db_by_source = {t.get('source_track_id'): t['id'] for t in db_tracks if t.get('source_track_id')}
+                for track in state['playlist']['tracks']:
+                    tid = track.get('id', '')
+                    if tid in db_by_source:
+                        track['db_track_id'] = db_by_source[tid]
+                database.update_mirrored_playlist_phase(mp['id'], 'discovering', discovery_progress=0)
+        except Exception as e:
+            logger.warning(f"Could not resolve mirrored playlist for discovery: {e}")
 
         # Clear skip_discovery flags on all tracks (in case of prior retry)
         for track in state['playlist']['tracks']:
