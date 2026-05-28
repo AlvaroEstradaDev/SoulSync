@@ -492,6 +492,9 @@ class MusicDatabase:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_mirrored_playlists_source ON mirrored_playlists (source, source_playlist_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_mirrored_tracks_playlist ON mirrored_playlist_tracks (playlist_id)")
 
+            # TODO: youtube_playlist_states + youtube_playlist_track_states tables are deprecated.
+            # All YouTube playlist state now lives in mirrored_playlists + mirrored_playlist_tracks.
+            # These tables can be dropped after manual migration of any existing data.
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS youtube_playlist_states (
                     url_hash TEXT PRIMARY KEY,
@@ -12357,99 +12360,6 @@ class MusicDatabase:
                 return cursor.rowcount > 0
         except Exception as e:
             logger.error(f"Error deleting mirrored playlist: {e}")
-            return False
-
-    # ── YouTube Playlist State Persistence ────────────────────────────
-
-    _YTPS_EXCLUDED_KEYS = frozenset({'discovery_future', 'discovery_results'})
-
-    @staticmethod
-    def _json_serial_warn(obj):
-        logger.warning(f"[YouTube State] Non-serializable object coerced to str: {type(obj).__name__}: {obj!r:.200}")
-        return str(obj)
-
-    def save_youtube_playlist_state(self, url_hash: str, state: dict) -> bool:
-        try:
-            serializable = {k: v for k, v in state.items() if k not in self._YTPS_EXCLUDED_KEYS}
-            state_json = json.dumps(serializable, default=self._json_serial_warn)
-            discovery_results = state.get('discovery_results', [])
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    INSERT INTO youtube_playlist_states (url_hash, state_json, updated_at)
-                    VALUES (?, ?, CURRENT_TIMESTAMP)
-                    ON CONFLICT(url_hash) DO UPDATE SET
-                        state_json = excluded.state_json,
-                        updated_at = CURRENT_TIMESTAMP
-                """, (url_hash, state_json))
-                cursor.execute("DELETE FROM youtube_playlist_track_states WHERE url_hash = ?", (url_hash,))
-                for result in discovery_results:
-                    idx = result.get('index', 0)
-                    cursor.execute("""
-                        INSERT INTO youtube_playlist_track_states (url_hash, track_index, result_json)
-                        VALUES (?, ?, ?)
-                    """, (url_hash, idx, json.dumps(result, default=self._json_serial_warn)))
-                conn.commit()
-                return True
-        except Exception as e:
-            logger.error(f"Error saving YouTube playlist state: {e}")
-            return False
-
-    def load_youtube_playlist_state(self, url_hash: str) -> Optional[dict]:
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT state_json FROM youtube_playlist_states WHERE url_hash = ?", (url_hash,))
-                row = cursor.fetchone()
-                if not row:
-                    return None
-                state = json.loads(row['state_json'])
-                state.setdefault('discovery_future', None)
-                state['discovery_results'] = self._load_track_states(cursor, url_hash)
-                return state
-        except Exception as e:
-            logger.error(f"Error loading YouTube playlist state: {e}")
-            return None
-
-    def load_all_youtube_playlist_states(self) -> Dict[str, dict]:
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT url_hash, state_json FROM youtube_playlist_states")
-                result = {}
-                for row in cursor.fetchall():
-                    state = json.loads(row['state_json'])
-                    state.setdefault('discovery_future', None)
-                    state['discovery_results'] = self._load_track_states(cursor, row['url_hash'])
-                    result[row['url_hash']] = state
-                return result
-        except Exception as e:
-            logger.error(f"Error loading all YouTube playlist states: {e}")
-            return {}
-
-    def _load_track_states(self, cursor, url_hash: str) -> list:
-        cursor.execute(
-            "SELECT result_json FROM youtube_playlist_track_states WHERE url_hash = ? ORDER BY track_index",
-            (url_hash,)
-        )
-        results = []
-        for row in cursor.fetchall():
-            try:
-                results.append(json.loads(row['result_json']))
-            except (json.JSONDecodeError, TypeError) as e:
-                logger.warning(f"[YouTube State] Skipping corrupted track state row for {url_hash}: {e}")
-        return results
-
-    def delete_youtube_playlist_state(self, url_hash: str) -> bool:
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("DELETE FROM youtube_playlist_states WHERE url_hash = ?", (url_hash,))
-                cursor.execute("DELETE FROM youtube_playlist_track_states WHERE url_hash = ?", (url_hash,))
-                conn.commit()
-                return True
-        except Exception as e:
-            logger.error(f"Error deleting YouTube playlist state: {e}")
             return False
 
     # ===========================
