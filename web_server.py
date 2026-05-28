@@ -25125,6 +25125,13 @@ def reset_youtube_playlist(url_hash):
         state['sync_progress'] = {}
         state['discovery_future'] = None
         state['last_accessed'] = time.time()
+        playlist_id = state.get('mirrored_playlist_id')
+        if playlist_id:
+            try:
+                database = get_database()
+                database.update_mirrored_playlist_phase(playlist_id, 'fresh', discovery_progress=0)
+            except Exception as db_err:
+                logger.warning(f"Failed to reset mirrored playlist phase {playlist_id}: {db_err}")
         
         logger.info(f"Reset YouTube playlist to fresh phase: {state['playlist']['name']}")
         return jsonify({"success": True, "message": "Playlist reset to fresh state"})
@@ -25146,8 +25153,14 @@ def delete_youtube_playlist(url_hash):
         if 'discovery_future' in state and state['discovery_future']:
             state['discovery_future'].cancel()
         
-        # Remove from storage
         playlist_name = state['playlist']['name']
+        playlist_id = state.get('mirrored_playlist_id')
+        if playlist_id:
+            try:
+                database = get_database()
+                database.delete_mirrored_playlist(playlist_id)
+            except Exception as db_err:
+                logger.warning(f"Failed to delete mirrored playlist {playlist_id}: {db_err}")
         del youtube_playlist_states[url_hash]
         
         logger.info(f"Deleted YouTube playlist from backend: {playlist_name}")
@@ -25178,6 +25191,13 @@ def update_youtube_playlist_phase(url_hash):
         old_phase = state.get('phase', 'unknown')
         state['phase'] = new_phase
         state['last_accessed'] = time.time()
+        playlist_id = state.get('mirrored_playlist_id')
+        if playlist_id:
+            try:
+                database = get_database()
+                database.update_mirrored_playlist_phase(playlist_id, new_phase)
+            except Exception as db_err:
+                logger.warning(f"Failed to persist phase to DB for {playlist_id}: {db_err}")
         
         logger.info(f"Updated YouTube playlist {url_hash} phase: {old_phase} → {new_phase}")
         return jsonify({"success": True, "message": f"Phase updated to {new_phase}", "old_phase": old_phase, "new_phase": new_phase})
@@ -34264,15 +34284,17 @@ def retry_failed_mirrored_discovery(playlist_id):
 
 @app.route('/api/mirrored-playlists/discovery-states', methods=['GET'])
 def get_mirrored_discovery_states():
-    """Return discovery states for any mirrored playlists that have active/completed discoveries."""
+    """Return discovery states for all playlists with active/completed discoveries."""
     try:
         states = []
         for url_hash, state in youtube_playlist_states.items():
-            if not url_hash.startswith('mirrored_'):
-                continue
+            playlist_id = state.get('mirrored_playlist_id')
+            if not playlist_id and url_hash.startswith('mirrored_'):
+                pid_str = url_hash.replace('mirrored_', '')
+                playlist_id = int(pid_str) if pid_str.isdigit() else None
             states.append({
                 'url_hash': url_hash,
-                'playlist_id': int(url_hash.replace('mirrored_', '')),
+                'playlist_id': playlist_id,
                 'playlist': state['playlist'],
                 'phase': state['phase'],
                 'status': state.get('status', ''),
