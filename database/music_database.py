@@ -12240,6 +12240,64 @@ class MusicDatabase:
             logger.error(f"Error getting mirrored playlist status counts: {e}")
         return result
 
+    def get_all_mirrored_playlist_status_counts(self, profile_id: int = 1) -> dict:
+        """Batch version of get_mirrored_playlist_status_counts.
+        Returns {playlist_id: {total, discovered, wishlisted, in_library}} for all mirrored playlists."""
+        result = {}
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT id FROM mirrored_playlists WHERE profile_id = ?", (profile_id,))
+                playlist_ids = [row['id'] for row in cursor.fetchall()]
+                if not playlist_ids:
+                    return result
+
+                placeholders = ','.join('?' * len(playlist_ids))
+                cursor.execute(
+                    f"SELECT playlist_id, COUNT(*) as total FROM mirrored_playlist_tracks WHERE playlist_id IN ({placeholders}) GROUP BY playlist_id",
+                    playlist_ids
+                )
+                for row in cursor.fetchall():
+                    result.setdefault(row['playlist_id'], {'total': 0, 'discovered': 0, 'wishlisted': 0, 'in_library': 0})
+                    result[row['playlist_id']]['total'] = row['total']
+
+                cursor.execute(
+                    f"SELECT playlist_id, COUNT(*) as discovered FROM mirrored_playlist_tracks WHERE playlist_id IN ({placeholders}) AND extra_data LIKE '%\"discovered\": true%' GROUP BY playlist_id",
+                    playlist_ids
+                )
+                for row in cursor.fetchall():
+                    result.setdefault(row['playlist_id'], {'total': 0, 'discovered': 0, 'wishlisted': 0, 'in_library': 0})
+                    result[row['playlist_id']]['discovered'] = row['discovered']
+
+                try:
+                    cursor.execute(f"""
+                        SELECT mpt.playlist_id,
+                            SUM(CASE WHEN mpt.source_track_id IS NOT NULL AND mpt.source_track_id != ''
+                                 AND EXISTS (SELECT 1 FROM wishlist_tracks wt
+                                             WHERE wt.spotify_track_id = mpt.source_track_id)
+                                 THEN 1 ELSE 0 END) as wishlisted,
+                            SUM(CASE WHEN EXISTS (SELECT 1 FROM tracks t
+                                                  JOIN artists a ON t.artist_id = a.id
+                                                  WHERE t.title = mpt.track_name COLLATE NOCASE
+                                                    AND (a.name = mpt.artist_name COLLATE NOCASE
+                                                         OR t.track_artist = mpt.artist_name COLLATE NOCASE))
+                                 THEN 1 ELSE 0 END) as in_library
+                        FROM mirrored_playlist_tracks mpt
+                        WHERE mpt.playlist_id IN ({placeholders})
+                        GROUP BY mpt.playlist_id
+                    """, playlist_ids)
+                    for row in cursor.fetchall():
+                        pid = row['playlist_id']
+                        result.setdefault(pid, {'total': 0, 'discovered': 0, 'wishlisted': 0, 'in_library': 0})
+                        result[pid]['wishlisted'] = row['wishlisted'] or 0
+                        result[pid]['in_library'] = row['in_library'] or 0
+                except Exception as extra_err:
+                    logger.debug(f"Optional batch status counts failed: {extra_err}")
+
+        except Exception as e:
+            logger.error(f"Error getting batch mirrored playlist status counts: {e}")
+        return result
+
     def delete_mirrored_playlist(self, playlist_id: int) -> bool:
         """Delete a mirrored playlist and its tracks (CASCADE)."""
         try:
